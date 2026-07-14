@@ -10,6 +10,37 @@ from core.models import Command, Group
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "rsCommand")
 COMMANDS_PATH = os.path.join(CONFIG_DIR, "commands.yaml")
+SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.yaml")
+
+# 기본 폰트: 기존 Monospace 에서 크기만 한 단계 크게(11 -> 12)
+DEFAULT_SETTINGS = {"font_family": "Monospace", "font_size": 12}
+
+
+def load_settings() -> dict:
+    if not os.path.exists(SETTINGS_PATH):
+        return dict(DEFAULT_SETTINGS)
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        family = str(data.get("font_family") or DEFAULT_SETTINGS["font_family"])
+        size = int(data.get("font_size") or DEFAULT_SETTINGS["font_size"])
+        if size <= 0:
+            size = DEFAULT_SETTINGS["font_size"]
+        return {"font_family": family, "font_size": size}
+    except Exception:
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(settings: dict) -> None:
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    data = {
+        "font_family": str(settings.get("font_family", DEFAULT_SETTINGS["font_family"])),
+        "font_size": int(settings.get("font_size", DEFAULT_SETTINGS["font_size"])),
+    }
+    tmp = SETTINGS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    os.replace(tmp, SETTINGS_PATH)
 
 
 def _default_groups() -> List[Group]:

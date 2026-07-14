@@ -81,7 +81,7 @@ class _Reader(QThread):
 class TerminalWidget(QWidget):
     session_closed = Signal(object)  # 자기 자신을 전달
 
-    def __init__(self, channel, client=None, parent=None) -> None:
+    def __init__(self, channel, client=None, font=None, parent=None) -> None:
         super().__init__(parent)
         self.channel = channel
         self.client = client  # 이 터미널 전용 SSH 연결
@@ -92,14 +92,12 @@ class TerminalWidget(QWidget):
         self.setAttribute(Qt.WA_InputMethodEnabled, True)  # IME(한글 등) 입력
         self.setCursor(Qt.IBeamCursor)
 
-        font = QFont("Monospace")
-        font.setStyleHint(QFont.Monospace)
-        font.setPointSize(11)
+        if font is None:
+            font = QFont("Monospace")
+            font.setStyleHint(QFont.Monospace)
+            font.setPointSize(12)
         self.setFont(font)
-        fm = QFontMetricsF(font)
-        self._cw = max(1.0, fm.horizontalAdvance("M"))
-        self._ch = max(1.0, fm.height())
-        self._ascent = fm.ascent()
+        self._recompute_metrics()
 
         self._cols = 80
         self._rows = 24
@@ -182,7 +180,33 @@ class TerminalWidget(QWidget):
         if steps:
             self._vbar.setValue(int(self._vbar.value() - steps * 3))
 
-    # -------------------------------------------------------------- 크기
+    # -------------------------------------------------------------- 폰트/크기
+    def _recompute_metrics(self) -> None:
+        fm = QFontMetricsF(self.font())
+        self._cw = max(1.0, fm.horizontalAdvance("M"))
+        self._ch = max(1.0, fm.height())
+        self._ascent = fm.ascent()
+
+    def apply_font(self, font) -> None:
+        """폰트/크기 변경을 반영하고 셀 크기·pty 크기를 재계산."""
+        self.setFont(font)
+        self._recompute_metrics()
+        cols = max(1, int(self._text_width() / self._cw))
+        rows = max(1, int(self.height() / self._ch))
+        self._cols, self._rows = cols, rows
+        self._clear_selection()
+        try:
+            self.screen.resize(rows, cols)
+        except Exception:
+            pass
+        if self._alive:
+            try:
+                self.channel.resize_pty(width=cols, height=rows)
+            except Exception:
+                pass
+        self._update_scrollbar()
+        self.update()
+
     def _text_width(self) -> int:
         return max(1, self.width() - self._sbw)
 

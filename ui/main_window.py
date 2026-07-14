@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QFontDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -59,6 +60,11 @@ class MainWindow(QMainWindow):
         self._syncing = False  # 전체선택 체크박스 동기화 중 재귀 방지
         self._last_info: Optional[ConnectionInfo] = None  # 새 터미널 다이얼로그 프리필
 
+        # 터미널/입력창 공용 폰트 (설정 저장/복원)
+        s = store.load_settings()
+        self._term_font = QFont(s["font_family"], s["font_size"])
+        self._term_font.setStyleHint(QFont.Monospace)
+
         self.setWindowTitle("rsCommand — SSH 일괄 명령 실행")
         self.resize(1180, 760)
 
@@ -70,13 +76,17 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         # 상단 상태바
         self.conn_label = QLabel()
+        self.font_btn = QPushButton("글꼴")
+        self.font_btn.setToolTip("터미널/입력창 폰트·크기 변경")
         self.reconnect_btn = QPushButton("재연결")
         self.disconnect_btn = QPushButton("연결끊기")
+        self.font_btn.clicked.connect(self._on_change_font)
         self.reconnect_btn.clicked.connect(self._on_reconnect)
         self.disconnect_btn.clicked.connect(self._on_disconnect)
 
         top_bar = QHBoxLayout()
         top_bar.addWidget(self.conn_label, 1)
+        top_bar.addWidget(self.font_btn)
         top_bar.addWidget(self.reconnect_btn)
         top_bar.addWidget(self.disconnect_btn)
 
@@ -186,9 +196,7 @@ class MainWindow(QMainWindow):
             "명령을 클릭하면 여기 표시됩니다. 수정 후 Ctrl+Enter 또는 [입력]으로 실행 "
             "(여러 줄 입력 가능)"
         )
-        mono = QFont("Monospace")
-        mono.setStyleHint(QFont.Monospace)
-        self.cmd_edit.setFont(mono)
+        self.cmd_edit.setFont(self._term_font)
         # 터미널과 어울리는 다크 배경 + bash 구문 강조
         self.cmd_edit.setStyleSheet(
             "QPlainTextEdit { background:#1e1e1e; color:#d3d7cf;"
@@ -501,6 +509,26 @@ class MainWindow(QMainWindow):
         term.send_text(payload)
         term.setFocus()
 
+    def _on_change_font(self) -> None:
+        """터미널/입력창 폰트·크기 변경 (모든 터미널 탭에 즉시 적용, 설정 저장)."""
+        res = QFontDialog.getFont(self._term_font, self, "터미널/입력창 폰트")
+        # PySide6 버전에 따라 (font, ok) 또는 (ok, font) 순서가 다를 수 있음
+        if isinstance(res[0], bool):
+            ok, font = res
+        else:
+            font, ok = res
+        if not ok:
+            return
+        font.setStyleHint(QFont.Monospace)
+        self._term_font = font
+        self.cmd_edit.setFont(font)
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if isinstance(w, TerminalWidget):
+                w.apply_font(font)
+        size = font.pointSize() if font.pointSize() > 0 else store.DEFAULT_SETTINGS["font_size"]
+        store.save_settings({"font_family": font.family(), "font_size": size})
+
     def _run_in_terminal(self, commands: List[Command]) -> None:
         parts = [c.command.strip() for c in commands if c.command.strip()]
         if not parts:
@@ -542,7 +570,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "터미널 열기 실패", str(exc))
             return None
 
-        term = TerminalWidget(channel, client=client)
+        term = TerminalWidget(channel, client=client, font=self._term_font)
         term.session_closed.connect(self._on_terminal_session_closed)
         self._term_counter += 1
         title = f"{info.username}@{info.host}"
