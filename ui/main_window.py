@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from core import store
 from core.models import Command, Group
 from ssh.client import ConnectionInfo, SSHClient
+from ui.bash_highlighter import BashHighlighter
 from ui.command_editor import CommandEditor
 from ui.connect_dialog import ConnectDialog
 from ui.terminal_widget import TerminalWidget
@@ -188,6 +189,15 @@ class MainWindow(QMainWindow):
         mono = QFont("Monospace")
         mono.setStyleHint(QFont.Monospace)
         self.cmd_edit.setFont(mono)
+        # 터미널과 어울리는 다크 배경 + bash 구문 강조
+        self.cmd_edit.setStyleSheet(
+            "QPlainTextEdit { background:#1e1e1e; color:#d3d7cf;"
+            " selection-background-color:#44475a; }"
+        )
+        _pal = self.cmd_edit.palette()
+        _pal.setColor(QPalette.PlaceholderText, QColor("#7f8c8d"))
+        self.cmd_edit.setPalette(_pal)
+        self._cmd_highlighter = BashHighlighter(self.cmd_edit.document())
         send_btn = QPushButton("입력")
         send_btn.setToolTip("현재 터미널로 전송 (Ctrl+Enter)")
         send_btn.clicked.connect(self._on_send_cmd)
