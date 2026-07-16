@@ -8,6 +8,7 @@ Paramiko 대화형 셸 채널에 키 입력을 보내고, 출력 바이트를 py
 """
 from __future__ import annotations
 
+import copy
 import socket
 from typing import List, Optional, Tuple
 
@@ -78,6 +79,70 @@ class _Reader(QThread):
         self._run = False
 
 
+class TerminalScreen(pyte.HistoryScreen):
+    """pyte HistoryScreen + 대체 화면(alternate screen) 지원.
+
+    pyte 는 대체 화면(mode 47/1047/1049)을 구현하지 않아 vim/less/htop 등
+    전체화면 앱이 스크롤백을 오염시키고 화면이 어긋난다. 진입 시 현재 버퍼를
+    저장하고 깨끗한 화면으로 전환, 종료 시 복원하며, 대체 화면 동안에는
+    스크롤백(히스토리)에 줄을 쌓지 않는다.
+    """
+
+    def __init__(self, columns, lines, history=5000, ratio=0.5) -> None:
+        super().__init__(columns, lines, history=history, ratio=ratio)
+        self.in_alt = False
+        self._saved_buffer = None
+        self._saved_cursor = None
+
+    def _enter_alt(self) -> None:
+        if self.in_alt:
+            return
+        self.in_alt = True
+        self._saved_buffer = copy.deepcopy(self.buffer)
+        self._saved_cursor = copy.copy(self.cursor)
+        self.buffer.clear()
+        self.cursor.x = 0
+        self.cursor.y = 0
+        self.dirty.update(range(self.lines))
+
+    def _leave_alt(self) -> None:
+        if not self.in_alt:
+            return
+        self.in_alt = False
+        if self._saved_buffer is not None:
+            self.buffer.clear()
+            self.buffer.update(self._saved_buffer)
+        if self._saved_cursor is not None:
+            self.cursor.x = self._saved_cursor.x
+            self.cursor.y = self._saved_cursor.y
+        self._saved_buffer = None
+        self._saved_cursor = None
+        self.dirty.update(range(self.lines))
+
+    def set_mode(self, *modes, **kwargs) -> None:
+        if kwargs.get("private") and (set(modes) & {47, 1047, 1049}):
+            self._enter_alt()
+        super().set_mode(*modes, **kwargs)
+
+    def reset_mode(self, *modes, **kwargs) -> None:
+        if kwargs.get("private") and (set(modes) & {47, 1047, 1049}):
+            self._leave_alt()
+        super().reset_mode(*modes, **kwargs)
+
+    def index(self) -> None:
+        # 대체 화면에서는 스크롤백에 줄을 쌓지 않음
+        if self.in_alt:
+            pyte.Screen.index(self)
+        else:
+            super().index()
+
+    def reverse_index(self) -> None:
+        if self.in_alt:
+            pyte.Screen.reverse_index(self)
+        else:
+            super().reverse_index()
+
+
 class TerminalWidget(QWidget):
     session_closed = Signal(object)  # 자기 자신을 전달
 
@@ -101,7 +166,7 @@ class TerminalWidget(QWidget):
 
         self._cols = 80
         self._rows = 24
-        self.screen = pyte.HistoryScreen(
+        self.screen = TerminalScreen(
             self._cols, self._rows, history=_HISTORY_LINES, ratio=0.5
         )
         self.stream = pyte.ByteStream(self.screen)
@@ -442,6 +507,14 @@ class TerminalWidget(QWidget):
                 self._copy()
                 return
             if key == Qt.Key_V:
+                self._paste()
+                return
+        # Ctrl+Insert : 복사 / Shift+Insert : 붙여넣기
+        if key == Qt.Key_Insert:
+            if mod & Qt.ControlModifier:
+                self._copy()
+                return
+            if mod & Qt.ShiftModifier:
                 self._paste()
                 return
         data = self._map_key(event)
