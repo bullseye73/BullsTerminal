@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QFileDialog,
     QFontDialog,
     QHBoxLayout,
     QInputDialog,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QStyle,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -74,15 +76,47 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- UI 구성
     def _build_ui(self) -> None:
-        # 상단 상태바
+        style = self.style()
+        icon_new = style.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        icon_reload = style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        icon_close = style.standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton)
+        icon_font = style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
+
+        # ---- 메뉴바 ----
+        conn_menu = self.menuBar().addMenu("연결")
+        act_new_term = conn_menu.addAction(icon_new, "새 터미널")
+        conn_menu.addSeparator()
+        act_reconnect = conn_menu.addAction(icon_reload, "재연결 (활성 탭)")
+        act_disconnect = conn_menu.addAction(icon_close, "연결끊기 (활성 탭)")
+        act_new_term.triggered.connect(self._on_new_terminal)
+        act_reconnect.triggered.connect(self._on_reconnect)
+        act_disconnect.triggered.connect(self._on_disconnect)
+
+        settings_menu = self.menuBar().addMenu("설정")
+        act_font = settings_menu.addAction(icon_font, "글꼴·크기 변경...")
+        act_font.triggered.connect(self._on_change_font)
+
+        cmd_menu = self.menuBar().addMenu("명령 관리")
+        act_export = cmd_menu.addAction("명령 백업 (내보내기)...")
+        act_import = cmd_menu.addAction("명령 복원 (가져오기)...")
+        act_export.triggered.connect(self._on_export_commands)
+        act_import.triggered.connect(self._on_import_commands)
+
+        # ---- 상단 상태바 (아이콘 버튼) ----
         self.conn_label = QLabel()
-        self.font_btn = QPushButton("글꼴")
-        self.font_btn.setToolTip("터미널/입력창 폰트·크기 변경")
-        self.reconnect_btn = QPushButton("재연결")
-        self.disconnect_btn = QPushButton("연결끊기")
-        self.font_btn.clicked.connect(self._on_change_font)
-        self.reconnect_btn.clicked.connect(self._on_reconnect)
-        self.disconnect_btn.clicked.connect(self._on_disconnect)
+
+        def _icon_btn(icon, tip, slot):
+            b = QPushButton()
+            b.setIcon(icon)
+            b.setToolTip(tip)
+            b.setFlat(True)
+            b.setFixedWidth(34)
+            b.clicked.connect(slot)
+            return b
+
+        self.font_btn = _icon_btn(icon_font, "글꼴·크기 변경", self._on_change_font)
+        self.reconnect_btn = _icon_btn(icon_reload, "재연결 (활성 탭)", self._on_reconnect)
+        self.disconnect_btn = _icon_btn(icon_close, "연결끊기 (활성 탭)", self._on_disconnect)
 
         top_bar = QHBoxLayout()
         top_bar.addWidget(self.conn_label, 1)
@@ -186,7 +220,9 @@ class MainWindow(QMainWindow):
         self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self.tabs.currentChanged.connect(lambda _i: self._update_connection_label())
 
-        new_term_btn = QPushButton("+ 터미널")
+        new_term_btn = QPushButton(" 터미널")
+        new_term_btn.setIcon(icon_new)
+        new_term_btn.setToolTip("새 터미널 (다른 호스트로도 연결 가능)")
         new_term_btn.clicked.connect(self._on_new_terminal)
         self.tabs.setCornerWidget(new_term_btn)
 
@@ -334,6 +370,86 @@ class MainWindow(QMainWindow):
             if c is cmd:
                 self.command_list.setCurrentRow(i)
                 return
+
+    # ------------------------------------------------------- 백업 / 복원
+    def _on_export_commands(self) -> None:
+        """명령 그룹 전체를 파일로 백업."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "명령 백업 저장", "rscommand-commands.yaml",
+            "YAML 파일 (*.yaml *.yml);;모든 파일 (*)",
+        )
+        if not path:
+            return
+        try:
+            store.export_groups(self.groups, path)
+        except Exception as exc:
+            QMessageBox.critical(self, "백업 실패", str(exc))
+            return
+        total = sum(len(g.commands) for g in self.groups)
+        QMessageBox.information(
+            self, "백업 완료",
+            f"그룹 {len(self.groups)}개 / 명령 {total}개를 저장했습니다.\n{path}",
+        )
+
+    def _on_import_commands(self) -> None:
+        """백업 파일에서 명령 그룹을 가져온다(병합 또는 교체)."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "명령 복원 파일 선택", "",
+            "YAML 파일 (*.yaml *.yml);;모든 파일 (*)",
+        )
+        if not path:
+            return
+        try:
+            imported = store.import_groups(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "복원 실패", f"파일을 읽을 수 없습니다.\n{exc}")
+            return
+        if not imported:
+            QMessageBox.information(self, "안내", "가져올 그룹이 없습니다.")
+            return
+
+        box = QMessageBox(self)
+        box.setWindowTitle("명령 복원")
+        box.setIcon(QMessageBox.Question)
+        box.setText(
+            f"{len(imported)}개 그룹을 가져옵니다.\n"
+            "기존 명령과 어떻게 처리할까요?"
+        )
+        merge_btn = box.addButton("병합", QMessageBox.AcceptRole)
+        replace_btn = box.addButton("교체", QMessageBox.DestructiveRole)
+        box.addButton("취소", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is merge_btn:
+            self._merge_groups(imported)
+        elif clicked is replace_btn:
+            self.groups = imported
+        else:
+            return
+
+        self._sort_data()
+        store.save_groups(self.groups)
+        self._refresh_groups(keep_row=0)
+        total = sum(len(g.commands) for g in self.groups)
+        QMessageBox.information(
+            self, "복원 완료",
+            f"현재 그룹 {len(self.groups)}개 / 명령 {total}개.",
+        )
+
+    def _merge_groups(self, imported: List[Group]) -> None:
+        by_name = {g.name: g for g in self.groups}
+        for ig in imported:
+            existing = by_name.get(ig.name)
+            if existing is None:
+                self.groups.append(ig)
+                by_name[ig.name] = ig
+                continue
+            have = {(c.label, c.command) for c in existing.commands}
+            for c in ig.commands:
+                key = (c.label, c.command)
+                if key not in have:
+                    existing.commands.append(c)
+                    have.add(key)
 
     def _on_group_add(self) -> None:
         name, ok = QInputDialog.getText(self, "그룹 추가", "그룹 이름:")

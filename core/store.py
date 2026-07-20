@@ -107,3 +107,19 @@ def save_groups(groups: List[Group]) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
     os.replace(tmp, COMMANDS_PATH)
+
+
+def export_groups(groups: List[Group], path: str) -> None:
+    """명령 그룹을 지정한 파일로 백업(내보내기)."""
+    data = {"groups": [g.to_dict() for g in groups]}
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
+
+def import_groups(path: str) -> List[Group]:
+    """백업 파일에서 명령 그룹을 읽어온다(가져오기)."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict) or "groups" not in data:
+        raise ValueError("올바른 rsCommand 명령 백업 파일이 아닙니다.")
+    return [Group.from_dict(g) for g in (data.get("groups") or [])]
