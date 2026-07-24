@@ -245,6 +245,9 @@ class MainWindow(QMainWindow):
         _pal.setColor(QPalette.PlaceholderText, QColor("#7f8c8d"))
         self.cmd_edit.setPalette(_pal)
         self._cmd_highlighter = BashHighlighter(self.cmd_edit.document())
+        save_btn = QPushButton("저장")
+        save_btn.setToolTip("수정한 내용을 선택된 명령에 저장")
+        save_btn.clicked.connect(self._on_save_cmd)
         send_btn = QPushButton("입력")
         send_btn.setToolTip("현재 터미널로 전송 (Ctrl+Enter)")
         send_btn.clicked.connect(self._on_send_cmd)
@@ -253,6 +256,7 @@ class MainWindow(QMainWindow):
         cmd_header = QHBoxLayout()
         cmd_header.addWidget(QLabel("명령 입력 (Ctrl+Enter 전송)"))
         cmd_header.addStretch(1)
+        cmd_header.addWidget(save_btn)
         cmd_header.addWidget(send_btn)
 
         cmd_panel = QWidget()
@@ -726,6 +730,32 @@ class MainWindow(QMainWindow):
         payload = text.replace("\r\n", "\n").rstrip("\n").replace("\n", "\r") + "\r"
         term.send_text(payload)
         term.setFocus()
+
+    def _on_save_cmd(self) -> None:
+        """입력창의 수정 내용을 현재 선택된 명령에 저장."""
+        group = self._current_group()
+        row = self.command_list.currentRow()
+        if group is None or not (0 <= row < len(group.commands)):
+            QMessageBox.information(self, "안내", "저장할 명령을 목록에서 선택하세요.")
+            return
+        text = self.cmd_edit.toPlainText().strip()
+        if not text:
+            QMessageBox.information(self, "안내", "명령 내용이 비어 있습니다.")
+            return
+        cmd = group.commands[row]
+        if cmd.command == text:
+            self.statusBar().showMessage("변경 사항이 없습니다.", 2000)
+            return
+        cmd.command = text
+        store.save_groups(self.groups)
+        # 목록 표시는 라벨만이라 순서 불변 → 툴팁만 갱신
+        item = self.command_list.item(row)
+        if item is not None:
+            tip = cmd.command
+            if cmd.description:
+                tip += f"\n\n{cmd.description}"
+            item.setToolTip(tip)
+        self.statusBar().showMessage(f"'{cmd.label}' 명령을 저장했습니다.", 2500)
 
     def _on_change_font(self) -> None:
         """터미널/입력창 폰트·크기 변경 (모든 터미널 탭에 즉시 적용, 설정 저장)."""
