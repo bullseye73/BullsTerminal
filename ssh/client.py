@@ -11,15 +11,6 @@ from dataclasses import dataclass
 
 import paramiko
 
-# 구형 서버 호환용으로 추가할 호스트키 알고리즘(후순위)
-_EXTRA_HOST_KEYS = ("rsa-sha2-512", "rsa-sha2-256", "ssh-rsa", "ssh-dss")
-# 구형 서버 호환용 키교환 알고리즘(있으면 추가)
-_EXTRA_KEX = (
-    "diffie-hellman-group14-sha1",
-    "diffie-hellman-group1-sha1",
-    "diffie-hellman-group-exchange-sha1",
-)
-
 
 @dataclass
 class ConnectionInfo:
@@ -29,12 +20,24 @@ class ConnectionInfo:
     password: str  # 메모리에만 보관, 디스크 저장 안 함
 
 
-def _extend(seq, extras):
-    result = list(seq)
-    for item in extras:
-        if item not in result:
-            result.append(item)
-    return tuple(result)
+def _enable_all_algorithms(transport: paramiko.Transport) -> None:
+    """paramiko 가 지원하는 모든 호스트키/키교환/암호/MAC 를 제시(최대 호환).
+
+    구형 서버/장비가 레거시 알고리즘만 제공해도 협상이 되도록,
+    기본 우선순위 대신 지원 가능한 전체 목록을 사용한다.
+    """
+    for pref, info in (
+        ("_preferred_keys", "_key_info"),
+        ("_preferred_kex", "_kex_info"),
+        ("_preferred_ciphers", "_cipher_info"),
+        ("_preferred_macs", "_mac_info"),
+    ):
+        try:
+            table = getattr(transport, info, None)
+            if table:
+                setattr(transport, pref, tuple(table.keys()))
+        except Exception:
+            pass
 
 
 class SSHClient:
@@ -43,7 +46,6 @@ class SSHClient:
         self.info: ConnectionInfo | None = None
 
     def connect(self, info: ConnectionInfo, timeout: float = 10.0) -> None:
-        first_error: Exception | None = None
         # 1) 표준(기본) 알고리즘으로 먼저 시도 — 최신 서버(rsa-sha2 등) 정상 협상
         try:
             self._transport = self._open(info, timeout, legacy=False)
@@ -51,17 +53,18 @@ class SSHClient:
             return
         except paramiko.AuthenticationException:
             raise  # 비밀번호 오류는 재시도하지 않음
-        except Exception as exc:
-            first_error = exc
+        except Exception:
+            pass
 
-        # 2) 실패 시 레거시 알고리즘(ssh-rsa/ssh-dss, SHA-1 kex)으로 재시도 — 구형 서버 대응
+        # 2) 실패 시 지원 가능한 모든 알고리즘으로 재시도 — 구형 서버/장비 대응
         try:
             self._transport = self._open(info, timeout, legacy=True)
             self.info = info
         except paramiko.AuthenticationException:
             raise
         except Exception:
-            raise first_error  # 대표(첫) 오류를 표시
+            # 최대 호환 시도까지 실패 → 그 오류를 표시(가장 정확)
+            raise
 
     def _open(
         self, info: ConnectionInfo, timeout: float, legacy: bool
@@ -70,16 +73,8 @@ class SSHClient:
         transport = paramiko.Transport(sock)
 
         if legacy:
-            # 구형 서버 호환: 레거시 호스트키/키교환을 후순위로 추가
-            try:
-                transport._preferred_keys = _extend(
-                    transport._preferred_keys, _EXTRA_HOST_KEYS
-                )
-                transport._preferred_kex = _extend(
-                    transport._preferred_kex, _EXTRA_KEX
-                )
-            except Exception:
-                pass
+            # 구형 서버 호환: 지원 가능한 모든 알고리즘 제시
+            _enable_all_algorithms(transport)
 
         try:
             transport.start_client(timeout=timeout)
