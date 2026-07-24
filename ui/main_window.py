@@ -11,7 +11,9 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
+    QDockWidget,
     QFileDialog,
     QFontDialog,
     QHBoxLayout,
@@ -61,6 +63,7 @@ class MainWindow(QMainWindow):
         self._term_counter = 0
         self._syncing = False  # 전체선택 체크박스 동기화 중 재귀 방지
         self._last_info: Optional[ConnectionInfo] = None  # 새 터미널 다이얼로그 프리필
+        self._clip_history: List[str] = []  # 클립보드 기록(최신순, 세션 메모리)
 
         # 터미널/입력창 공용 폰트 (설정 저장/복원)
         s = store.load_settings()
@@ -289,6 +292,105 @@ class MainWindow(QMainWindow):
         central_layout.addLayout(top_bar)
         central_layout.addWidget(central_split, 1)
         self.setCentralWidget(central)
+
+        # ---- 클립보드 기록 도킹 패널 (우측/하단 도킹 + 분리 가능) ----
+        self.clip_list = QListWidget()
+        self.clip_list.setStyleSheet("QListWidget::item { padding: 4px 4px; }")
+        self.clip_list.currentItemChanged.connect(self._on_clip_selected)
+        self.clip_list.itemDoubleClicked.connect(self._on_clip_run)
+
+        clip_del = QPushButton("삭제")
+        clip_clear = QPushButton("전체 삭제")
+        clip_del.setToolTip("선택 항목 삭제")
+        clip_clear.setToolTip("기록 및 시스템 클립보드 비우기")
+        clip_del.clicked.connect(self._on_clip_delete)
+        clip_clear.clicked.connect(self._on_clip_clear)
+        clip_btns = QHBoxLayout()
+        clip_btns.addWidget(clip_del)
+        clip_btns.addWidget(clip_clear)
+        clip_btns.addStretch(1)
+
+        clip_box = QWidget()
+        clip_layout = QVBoxLayout(clip_box)
+        clip_layout.setContentsMargins(4, 4, 4, 4)
+        clip_layout.addWidget(QLabel("클릭 → 입력창 / 더블클릭 → 실행"))
+        clip_layout.addWidget(self.clip_list, 1)
+        clip_layout.addLayout(clip_btns)
+
+        self.clip_dock = QDockWidget("클립보드 기록", self)
+        self.clip_dock.setObjectName("clipboardDock")
+        self.clip_dock.setWidget(clip_box)
+        self.clip_dock.setAllowedAreas(
+            Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.LeftDockWidgetArea
+        )
+        self.clip_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.clip_dock)
+
+        view_menu = self.menuBar().addMenu("보기")
+        view_menu.addAction(self.clip_dock.toggleViewAction())
+
+        # 시스템 클립보드 감시 + 현재 내용 시드
+        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        self._on_clipboard_changed()
+
+    # ---------------------------------------------------- 클립보드 기록
+    def _on_clipboard_changed(self) -> None:
+        text = QApplication.clipboard().text()
+        if not text or not text.strip():
+            return
+        text = text.replace("\r\n", "\n").rstrip("\n")
+        if text in self._clip_history:
+            self._clip_history.remove(text)
+        self._clip_history.insert(0, text)
+        del self._clip_history[100:]  # 최대 100개
+        self._refresh_clip_list()
+
+    def _refresh_clip_list(self) -> None:
+        self.clip_list.blockSignals(True)
+        self.clip_list.clear()
+        for t in self._clip_history:
+            first = t.strip().splitlines()[0] if t.strip() else ""
+            if len(first) > 80:
+                first = first[:80] + "…"
+            item = QListWidgetItem(first)
+            item.setToolTip(t)
+            self.clip_list.addItem(item)
+        self.clip_list.blockSignals(False)
+
+    def _on_clip_selected(self, current, _previous) -> None:
+        if current is None:
+            return
+        row = self.clip_list.row(current)
+        if 0 <= row < len(self._clip_history):
+            self.cmd_edit.setPlainText(self._clip_history[row])
+
+    def _on_clip_run(self, item: QListWidgetItem) -> None:
+        row = self.clip_list.row(item)
+        if 0 <= row < len(self._clip_history):
+            self.cmd_edit.setPlainText(self._clip_history[row])
+            self._on_send_cmd()
+
+    def _on_clip_delete(self) -> None:
+        row = self.clip_list.currentRow()
+        if 0 <= row < len(self._clip_history):
+            del self._clip_history[row]
+            self._refresh_clip_list()
+
+    def _on_clip_clear(self) -> None:
+        if not self._clip_history:
+            QApplication.clipboard().clear()
+            return
+        if QMessageBox.question(
+            self, "전체 삭제", "클립보드 기록과 시스템 클립보드를 비울까요?"
+        ) != QMessageBox.Yes:
+            return
+        self._clip_history.clear()
+        self._refresh_clip_list()
+        QApplication.clipboard().clear()
 
     # ------------------------------------------------------------- 상태 갱신
     def _current_terminal(self) -> Optional[TerminalWidget]:
@@ -677,7 +779,9 @@ class MainWindow(QMainWindow):
         try:
             client.connect(info)
         except Exception as exc:
-            QMessageBox.critical(self, "연결 실패", str(exc))
+            QMessageBox.critical(
+                self, "연결 실패", f"{type(exc).__name__}: {exc}"
+            )
             return None
         try:
             channel = client.open_shell()

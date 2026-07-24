@@ -1,8 +1,8 @@
 """Paramiko 기반 SSH 클라이언트 래퍼 (비밀번호 인증).
 
-Transport 를 직접 생성해 호스트키 알고리즘을 확장한다. 구형 서버/장비가
-ssh-dss(DSA)나 ssh-rsa(SHA-1) 호스트키만 제공해도 접속할 수 있도록,
-기본값에서 빠진 레거시 알고리즘을 후순위로 추가한다.
+먼저 표준(기본) 알고리즘으로 접속을 시도하고(최신 서버의 rsa-sha2 등 정상 협상),
+실패하면 레거시 호스트키(ssh-rsa/ssh-dss)·SHA-1 키교환을 후순위로 추가해 재시도한다
+(구형 서버/장비 대응). 표준 시도를 먼저 하므로 최신 서버 협상을 방해하지 않는다.
 """
 from __future__ import annotations
 
@@ -43,15 +43,43 @@ class SSHClient:
         self.info: ConnectionInfo | None = None
 
     def connect(self, info: ConnectionInfo, timeout: float = 10.0) -> None:
+        first_error: Exception | None = None
+        # 1) 표준(기본) 알고리즘으로 먼저 시도 — 최신 서버(rsa-sha2 등) 정상 협상
+        try:
+            self._transport = self._open(info, timeout, legacy=False)
+            self.info = info
+            return
+        except paramiko.AuthenticationException:
+            raise  # 비밀번호 오류는 재시도하지 않음
+        except Exception as exc:
+            first_error = exc
+
+        # 2) 실패 시 레거시 알고리즘(ssh-rsa/ssh-dss, SHA-1 kex)으로 재시도 — 구형 서버 대응
+        try:
+            self._transport = self._open(info, timeout, legacy=True)
+            self.info = info
+        except paramiko.AuthenticationException:
+            raise
+        except Exception:
+            raise first_error  # 대표(첫) 오류를 표시
+
+    def _open(
+        self, info: ConnectionInfo, timeout: float, legacy: bool
+    ) -> paramiko.Transport:
         sock = socket.create_connection((info.host, info.port), timeout=timeout)
         transport = paramiko.Transport(sock)
 
-        # 호스트키/키교환 알고리즘 확장 (구형 서버: no acceptable host key/kex 대응)
-        try:
-            transport._preferred_keys = _extend(transport._preferred_keys, _EXTRA_HOST_KEYS)
-            transport._preferred_kex = _extend(transport._preferred_kex, _EXTRA_KEX)
-        except Exception:
-            pass
+        if legacy:
+            # 구형 서버 호환: 레거시 호스트키/키교환을 후순위로 추가
+            try:
+                transport._preferred_keys = _extend(
+                    transport._preferred_keys, _EXTRA_HOST_KEYS
+                )
+                transport._preferred_kex = _extend(
+                    transport._preferred_kex, _EXTRA_KEX
+                )
+            except Exception:
+                pass
 
         try:
             transport.start_client(timeout=timeout)
@@ -63,9 +91,7 @@ class SSHClient:
         if not transport.is_authenticated():
             transport.close()
             raise RuntimeError("인증에 실패했습니다. 사용자명/비밀번호를 확인하세요.")
-
-        self._transport = transport
-        self.info = info
+        return transport
 
     def is_connected(self) -> bool:
         return self._transport is not None and self._transport.is_active()
