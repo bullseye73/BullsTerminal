@@ -86,6 +86,12 @@ class SSHClient:
         if not transport.is_authenticated():
             transport.close()
             raise RuntimeError("인증에 실패했습니다. 사용자명/비밀번호를 확인하세요.")
+
+        # 연결 유지 + 죽은 연결 감지 (30초 간격 keepalive)
+        try:
+            transport.set_keepalive(30)
+        except Exception:
+            pass
         return transport
 
     def is_connected(self) -> bool:

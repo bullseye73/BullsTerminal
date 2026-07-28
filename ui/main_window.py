@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QProgressDialog,
     QPushButton,
     QSplitter,
     QStyle,
@@ -83,6 +84,31 @@ class CommandEdit(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+class _ConnectWorker(QThread):
+    """백그라운드에서 SSH 연결 + 셸 채널 오픈 (GUI 프리징 방지)."""
+
+    ok = Signal(object, object)  # (SSHClient, channel)
+    fail = Signal(str)
+
+    def __init__(self, info: ConnectionInfo) -> None:
+        super().__init__()
+        self._info = info
+
+    def run(self) -> None:
+        client = SSHClient()
+        try:
+            client.connect(self._info)
+            channel = client.open_shell()
+        except Exception as exc:
+            try:
+                client.close()
+            except Exception:
+                pass
+            self.fail.emit(f"{type(exc).__name__}: {exc}")
+            return
+        self.ok.emit(client, channel)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -92,6 +118,10 @@ class MainWindow(QMainWindow):
         self._syncing = False  # 전체선택 체크박스 동기화 중 재귀 방지
         self._last_info: Optional[ConnectionInfo] = None  # 새 터미널 다이얼로그 프리필
         self._clip_history: List[str] = []  # 클립보드 기록(최신순, 세션 메모리)
+        self._connecting = False              # 연결 진행 중 여부
+        self._conn_worker: Optional[_ConnectWorker] = None  # 현재 연결 워커
+        self._conn_workers: set = set()       # 실행 중 워커 참조(GC 방지)
+        self._conn_dialog: Optional[QProgressDialog] = None
 
         # 터미널/입력창 공용 폰트 (설정 저장/복원)
         s = store.load_settings()
@@ -841,41 +871,91 @@ class MainWindow(QMainWindow):
         term.setFocus()
 
     # ------------------------------------------------------- 터미널 탭 관리
-    def _add_terminal(self, info: ConnectionInfo) -> Optional[TerminalWidget]:
-        client = SSHClient()
-        try:
-            client.connect(info)
-        except Exception as exc:
-            QMessageBox.critical(
-                self, "연결 실패", f"{type(exc).__name__}: {exc}"
-            )
-            return None
-        try:
-            channel = client.open_shell()
-        except Exception as exc:
-            client.close()
-            QMessageBox.critical(self, "터미널 열기 실패", str(exc))
-            return None
+    def _add_terminal(self, info: ConnectionInfo) -> None:
+        """백그라운드 스레드로 연결 → UI 프리징 없이 진행. 완료 시 콜백에서 탭 생성."""
+        if self._connecting:
+            QMessageBox.information(self, "안내", "이미 연결을 시도 중입니다.")
+            return
+        self._connecting = True
 
+        worker = _ConnectWorker(info)
+        self._conn_worker = worker
+        self._conn_workers.add(worker)
+        worker.ok.connect(self._on_connect_ok)
+        worker.fail.connect(self._on_connect_fail)
+        worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
+        worker.start()
+
+        dlg = QProgressDialog(
+            f"{info.username}@{info.host} 연결 중...", "취소", 0, 0, self
+        )
+        dlg.setWindowTitle("연결 중")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.canceled.connect(self._on_connect_cancel)
+        self._conn_dialog = dlg
+        dlg.show()
+
+    def _cleanup_worker(self, worker: "_ConnectWorker") -> None:
+        self._conn_workers.discard(worker)
+        worker.deleteLater()
+
+    def _close_conn_dialog(self) -> None:
+        if self._conn_dialog is not None:
+            try:
+                self._conn_dialog.canceled.disconnect()  # 종료 시 취소 오발 방지
+            except Exception:
+                pass
+            self._conn_dialog.close()
+            self._conn_dialog.deleteLater()
+            self._conn_dialog = None
+
+    def _on_connect_ok(self, client, channel) -> None:
+        if self.sender() is not self._conn_worker:
+            # 취소되었거나 지난 요청의 결과 → 폐기
+            try:
+                client.close()
+            except Exception:
+                pass
+            return
+        self._close_conn_dialog()
+        self._connecting = False
+        self._conn_worker = None
+
+        info = client.info
         term = TerminalWidget(channel, client=client, font=self._term_font)
         term.session_closed.connect(self._on_terminal_session_closed)
         self._term_counter += 1
-        title = f"{info.username}@{info.host}"
+        title = f"{info.username}@{info.host}" if info else f"터미널 {self._term_counter}"
         index = self.tabs.addTab(term, title)
         self.tabs.setCurrentIndex(index)
         term.setFocus()
         self._last_info = info
         self._update_connection_label()
-        return term
+
+    def _on_connect_fail(self, msg: str) -> None:
+        if self.sender() is not self._conn_worker:
+            return  # 취소/지난 요청
+        self._close_conn_dialog()
+        self._connecting = False
+        self._conn_worker = None
+        QMessageBox.critical(self, "연결 실패", msg)
+
+    def _on_connect_cancel(self) -> None:
+        # 워커는 소켓 타임아웃 후 종료되며 결과는 폐기됨(sender != _conn_worker)
+        self._conn_worker = None
+        self._connecting = False
+        self._close_conn_dialog()
 
     def _active_terminal(self) -> Optional[TerminalWidget]:
-        """현재 탭이 살아있는 터미널이면 반환, 아니면 새 연결을 연다."""
+        """현재 탭이 살아있는 터미널이면 반환. 없으면 안내(연결은 비동기라 자동 생성 안 함)."""
         term = self._current_terminal()
         if term is not None and term.is_alive():
             return term
-        self._on_new_terminal()
-        term = self._current_terminal()
-        return term if (term is not None and term.is_alive()) else None
+        QMessageBox.information(self, "안내", "먼저 우측 상단 '+ 터미널'로 연결하세요.")
+        return None
 
     def _on_new_terminal(self) -> None:
         dialog = ConnectDialog(self, prefill=self._last_info)
@@ -938,5 +1018,7 @@ class MainWindow(QMainWindow):
         self._update_connection_label()
 
     def closeEvent(self, event) -> None:
+        # 진행 중 연결 결과는 무시(late 시그널 폐기)
+        self._conn_worker = None
         self._close_all_terminals()
         super().closeEvent(event)
