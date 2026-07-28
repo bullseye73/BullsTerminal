@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -39,6 +40,33 @@ from ui.bash_highlighter import BashHighlighter
 from ui.command_editor import CommandEditor
 from ui.connect_dialog import ConnectDialog
 from ui.terminal_widget import TerminalWidget
+
+
+# 명령의 첫 토큰: sudo/doas 접두 + 명령이름/경로/변수 형태
+_CMD_START_RE = re.compile(
+    r"^(?:sudo\s+|doas\s+)?"
+    r"(?:[A-Za-z_][\w.+-]*|\.{0,2}/\S+|~/?\S*|\$\{?\w+)"
+)
+_URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*://")
+# 제어문자(탭/개행 제외)
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def looks_like_command(text: str) -> bool:
+    """클립보드 텍스트가 셸에서 쓸 만한 명령처럼 보이는지 판단(휴리스틱)."""
+    t = text.strip()
+    if not t or len(t) > 4000:
+        return False
+    if _CTRL_RE.search(t):
+        return False
+    lines = [ln for ln in t.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    first = lines[0].strip()
+    if _URL_RE.match(first):  # 순수 URL 제외
+        return False
+    # 첫 줄이 명령/경로/변수 형태로 시작해야 함(한글 등으로 시작하는 문장 제외)
+    return bool(_CMD_START_RE.match(first))
 
 
 class CommandEdit(QPlainTextEdit):
@@ -300,7 +328,8 @@ class MainWindow(QMainWindow):
         # ---- 클립보드 기록 도킹 패널 (우측/하단 도킹 + 분리 가능) ----
         self.clip_list = QListWidget()
         self.clip_list.setStyleSheet("QListWidget::item { padding: 4px 4px; }")
-        self.clip_list.currentItemChanged.connect(self._on_clip_selected)
+        self.clip_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.clip_list.itemSelectionChanged.connect(self._on_clip_selection_changed)
         self.clip_list.itemDoubleClicked.connect(self._on_clip_run)
 
         clip_del = QPushButton("삭제")
@@ -347,6 +376,8 @@ class MainWindow(QMainWindow):
         if not text or not text.strip():
             return
         text = text.replace("\r\n", "\n").rstrip("\n")
+        if not looks_like_command(text):  # 셸 명령처럼 보이는 것만 저장
+            return
         if text in self._clip_history:
             self._clip_history.remove(text)
         self._clip_history.insert(0, text)
@@ -365,12 +396,15 @@ class MainWindow(QMainWindow):
             self.clip_list.addItem(item)
         self.clip_list.blockSignals(False)
 
-    def _on_clip_selected(self, current, _previous) -> None:
-        if current is None:
-            return
-        row = self.clip_list.row(current)
-        if 0 <= row < len(self._clip_history):
-            self.cmd_edit.setPlainText(self._clip_history[row])
+    def _selected_clip_rows(self) -> List[int]:
+        return sorted(self.clip_list.row(it) for it in self.clip_list.selectedItems())
+
+    def _on_clip_selection_changed(self) -> None:
+        rows = self._selected_clip_rows()
+        texts = [self._clip_history[r] for r in rows if 0 <= r < len(self._clip_history)]
+        if texts:
+            # 여러 개 선택 시 줄바꿈으로 이어 입력창에 표시(줄마다 실행 가능)
+            self.cmd_edit.setPlainText("\n".join(texts))
 
     def _on_clip_run(self, item: QListWidgetItem) -> None:
         row = self.clip_list.row(item)
@@ -379,10 +413,13 @@ class MainWindow(QMainWindow):
             self._on_send_cmd()
 
     def _on_clip_delete(self) -> None:
-        row = self.clip_list.currentRow()
-        if 0 <= row < len(self._clip_history):
-            del self._clip_history[row]
-            self._refresh_clip_list()
+        rows = self._selected_clip_rows()
+        if not rows:
+            return
+        for r in sorted(rows, reverse=True):  # 뒤에서부터 삭제(인덱스 보존)
+            if 0 <= r < len(self._clip_history):
+                del self._clip_history[r]
+        self._refresh_clip_list()
 
     def _on_clip_clear(self) -> None:
         if not self._clip_history:
