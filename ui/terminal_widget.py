@@ -30,6 +30,8 @@ _DEFAULT_FG = "#d3d7cf"
 _DEFAULT_BG = "#1e1e1e"
 _SEL_BG = "#44475a"
 _HISTORY_LINES = 5000
+# pyte 는 private 모드를 (mode << 5) 로 저장. DECCKM(애플리케이션 커서 키)=모드 1.
+_DECCKM = 1 << 5
 
 Cell = Tuple[int, int]  # (row, col)
 
@@ -553,6 +555,13 @@ class TerminalWidget(QWidget):
         """Alt(메타) 조합이면 ESC 접두."""
         return (b"\x1b" + data) if (mod & Qt.AltModifier) else data
 
+    def _app_cursor_keys(self) -> bool:
+        """vim 등이 켜는 애플리케이션 커서 키 모드(DECCKM) 여부."""
+        try:
+            return _DECCKM in self.screen.mode
+        except Exception:
+            return False
+
     def _map_key(self, event) -> bytes:
         key = event.key()
         mod = event.modifiers()
@@ -561,8 +570,11 @@ class TerminalWidget(QWidget):
         # 방향/편집 키 (수정자는 CSI 파라미터로 인코딩)
         if key in self._CURSOR:
             letter = self._CURSOR[key]
-            return (("\x1b[" + letter) if m == 1
-                    else ("\x1b[1;%d%s" % (m, letter))).encode()
+            if m == 1:
+                # 애플리케이션 커서 키 모드(vim 등)면 SS3(\x1bO), 아니면 CSI(\x1b[)
+                prefix = "\x1bO" if self._app_cursor_keys() else "\x1b["
+                return (prefix + letter).encode()
+            return ("\x1b[1;%d%s" % (m, letter)).encode()
         if key in self._TILDE:
             num = self._TILDE[key]
             return (("\x1b[%s~" % num) if m == 1
