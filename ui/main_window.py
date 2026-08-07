@@ -40,6 +40,7 @@ from ssh.client import ConnectionInfo, SSHClient
 from ui.bash_highlighter import BashHighlighter
 from ui.command_editor import CommandEditor
 from ui.connect_dialog import ConnectDialog
+from ui.file_browser import FileBrowser
 from ui.terminal_widget import TerminalWidget
 
 
@@ -380,9 +381,16 @@ class MainWindow(QMainWindow):
         clip_layout.addWidget(self.clip_list, 1)
         clip_layout.addLayout(clip_btns)
 
-        self.clip_dock = QDockWidget("클립보드 기록", self)
-        self.clip_dock.setObjectName("clipboardDock")
-        self.clip_dock.setWidget(clip_box)
+        # 도크 안을 탭으로 구분: 클립보드 / 파일(SFTP)
+        self.file_browser = FileBrowser(self._active_transport, self)
+        self.dock_tabs = QTabWidget()
+        self.dock_tabs.addTab(clip_box, "클립보드")
+        self.dock_tabs.addTab(self.file_browser, "파일")
+        self.dock_tabs.currentChanged.connect(self._on_dock_tab_changed)
+
+        self.clip_dock = QDockWidget("도구", self)
+        self.clip_dock.setObjectName("toolDock")
+        self.clip_dock.setWidget(self.dock_tabs)
         self.clip_dock.setAllowedAreas(
             Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.LeftDockWidgetArea
         )
@@ -467,6 +475,18 @@ class MainWindow(QMainWindow):
     def _current_terminal(self) -> Optional[TerminalWidget]:
         w = self.tabs.currentWidget()
         return w if isinstance(w, TerminalWidget) else None
+
+    def _active_transport(self):
+        """활성 터미널의 SSH transport (파일 브라우저 SFTP용)."""
+        term = self._current_terminal()
+        if term is not None and term.is_alive() and term.client is not None:
+            return term.client.get_transport()
+        return None
+
+    def _on_dock_tab_changed(self, _index: int) -> None:
+        # '파일' 탭으로 전환 시 원격 목록 갱신
+        if self.dock_tabs.currentWidget() is self.file_browser:
+            self.file_browser.refresh_remote()
 
     def _update_connection_label(self) -> None:
         term = self._current_terminal()

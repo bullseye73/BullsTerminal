@@ -97,6 +97,9 @@ class SSHClient:
     def is_connected(self) -> bool:
         return self._transport is not None and self._transport.is_active()
 
+    def get_transport(self) -> "paramiko.Transport | None":
+        return self._transport
+
     def _require_transport(self) -> paramiko.Transport:
         if self._transport is None or not self._transport.is_active():
             raise RuntimeError("연결되지 않았습니다.")
