@@ -280,7 +280,7 @@ class MainWindow(QMainWindow):
         self.tabs.setTabsClosable(True)
         self.tabs.setMovable(True)
         self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
-        self.tabs.currentChanged.connect(lambda _i: self._update_connection_label())
+        self.tabs.currentChanged.connect(lambda _i: self._on_terminal_tab_changed())
 
         new_term_btn = QPushButton(" 터미널")
         new_term_btn.setIcon(icon_new)
@@ -486,6 +486,15 @@ class MainWindow(QMainWindow):
     def _on_dock_tab_changed(self, _index: int) -> None:
         # '파일' 탭으로 전환 시 원격 목록 갱신
         if self.dock_tabs.currentWidget() is self.file_browser:
+            self.file_browser.refresh_remote()
+
+    def _on_terminal_tab_changed(self) -> None:
+        # 활성 터미널이 바뀌면 상태바 + (파일 탭이 열려 있으면) 원격 목록 갱신
+        self._update_connection_label()
+        if (
+            getattr(self, "file_browser", None) is not None
+            and self.dock_tabs.currentWidget() is self.file_browser
+        ):
             self.file_browser.refresh_remote()
 
     def _update_connection_label(self) -> None:

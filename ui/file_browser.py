@@ -236,6 +236,8 @@ class FileBrowser(QWidget):
             pass
         self._sftp = transport.open_sftp_client()
         self._sftp_transport = transport
+        # 새(다른) 연결이면 이전 서버의 경로가 유효하지 않으므로 홈으로 초기화
+        self._remote_path = "."
         return self._sftp
 
     def refresh_remote(self) -> None:
