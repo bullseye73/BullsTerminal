@@ -147,6 +147,8 @@ class MainWindow(QMainWindow):
         # ---- 메뉴바 ----
         conn_menu = self.menuBar().addMenu("연결")
         act_new_term = conn_menu.addAction(icon_new, "새 터미널")
+        self.fav_menu = conn_menu.addMenu("즐겨찾기")
+        self.fav_menu.aboutToShow.connect(self._rebuild_fav_menu)
         conn_menu.addSeparator()
         act_reconnect = conn_menu.addAction(icon_reload, "재연결 (활성 탭)")
         act_disconnect = conn_menu.addAction(icon_close, "연결끊기 (활성 탭)")
@@ -990,6 +992,38 @@ class MainWindow(QMainWindow):
         dialog = ConnectDialog(self, prefill=self._last_info)
         if dialog.exec() == ConnectDialog.Accepted:
             self._add_terminal(dialog.connection_info())
+
+    def _rebuild_fav_menu(self) -> None:
+        """즐겨찾기 서브메뉴를 최신 목록으로 다시 구성."""
+        self.fav_menu.clear()
+        favs = store.load_favorites()
+        if not favs:
+            act = self.fav_menu.addAction("저장된 즐겨찾기 없음")
+            act.setEnabled(False)
+        else:
+            for fav in favs:
+                label = f"{fav['name']}  ({fav['username']}@{fav['host']})"
+                act = self.fav_menu.addAction(label)
+                act.triggered.connect(
+                    lambda _checked=False, f=dict(fav): self._connect_favorite(f)
+                )
+        self.fav_menu.addSeparator()
+        manage = self.fav_menu.addAction("새 연결 / 즐겨찾기 관리...")
+        manage.triggered.connect(self._on_new_terminal)
+
+    def _connect_favorite(self, fav: dict) -> None:
+        info = ConnectionInfo(
+            host=fav.get("host", ""),
+            port=int(fav.get("port", 22) or 22),
+            username=fav.get("username", ""),
+            password=fav.get("password", ""),
+        )
+        if info.password:
+            self._add_terminal(info)  # 저장된 비밀번호 → 바로 연결
+        else:
+            dialog = ConnectDialog(self, prefill=info)
+            if dialog.exec() == ConnectDialog.Accepted:
+                self._add_terminal(dialog.connection_info())
 
     def open_initial_terminal(self) -> None:
         """시작 시 첫 연결 다이얼로그를 띄운다."""

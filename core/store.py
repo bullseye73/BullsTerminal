@@ -11,6 +11,61 @@ from core.models import Command, Group
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "rsCommand")
 COMMANDS_PATH = os.path.join(CONFIG_DIR, "commands.yaml")
 SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.yaml")
+FAVORITES_PATH = os.path.join(CONFIG_DIR, "favorites.yaml")
+
+
+def load_favorites() -> "list[dict]":
+    """SSH 연결 즐겨찾기 목록 로드."""
+    if not os.path.exists(FAVORITES_PATH):
+        return []
+    try:
+        with open(FAVORITES_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        return []
+    out = []
+    for d in (data.get("favorites") or []):
+        name = str(d.get("name", "")).strip()
+        host = str(d.get("host", "")).strip()
+        if not name or not host:
+            continue
+        try:
+            port = int(d.get("port", 22) or 22)
+        except (TypeError, ValueError):
+            port = 22
+        out.append({
+            "name": name,
+            "host": host,
+            "port": port,
+            "username": str(d.get("username", "")),
+            "password": str(d.get("password", "")),
+        })
+    return out
+
+
+def _safe_port(value) -> int:
+    try:
+        return int(value or 22)
+    except (TypeError, ValueError):
+        return 22
+
+
+def save_favorites(favs: "list[dict]") -> None:
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    data = {"favorites": [
+        {
+            "name": str(f.get("name", "")),
+            "host": str(f.get("host", "")),
+            "port": _safe_port(f.get("port", 22)),
+            "username": str(f.get("username", "")),
+            "password": str(f.get("password", "")),
+        }
+        for f in favs
+    ]}
+    tmp = FAVORITES_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    os.replace(tmp, FAVORITES_PATH)
 
 # 기본 폰트: 기존 Monospace 에서 크기만 한 단계 크게(11 -> 12)
 DEFAULT_SETTINGS = {"font_family": "Monospace", "font_size": 12}
