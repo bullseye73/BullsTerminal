@@ -8,14 +8,26 @@ Paramiko 대화형 셸 채널에 키 입력을 보내고, 출력 바이트를 py
 """
 from __future__ import annotations
 
+import codecs
 import copy
+import itertools
+import re
 import socket
+import threading
+import time
 from typing import List, Optional, Tuple
 
 import pyte
 from PySide6.QtCore import QRectF, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QClipboard, QColor, QFont, QFontMetricsF, QPainter
-from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QMenu,
+    QMessageBox,
+    QScrollBar,
+    QWidget,
+)
 
 # ANSI 기본 8색 (dark/bright)
 _BASE = {
@@ -33,10 +45,102 @@ _HISTORY_LINES = 5000
 # pyte 는 private 모드를 (mode << 5) 로 저장. DECCKM(애플리케이션 커서 키)=모드 1.
 _DECCKM = 1 << 5
 
+# pyte 파서는 순수 파이썬이라 느림(≈300KB/s). 파싱은 리더 스레드에서 수행하고
+# GUI 는 락 하에 화면을 읽어 페인트만 한다(_feed/paintEvent). GIL 이 주기적으로
+# 양보되므로 대량 출력에도 UI 가 막히지 않고, recv→feed 순차 처리로 SSH
+# 백프레셔가 걸려 데이터 폐기 없이 완전 보존된다.
+
+# ANSI 이스케이프 시퀀스 제거(세션 로그용)
+_ANSI_RE = re.compile(
+    r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"   # OSC
+    r"|\x1b[P^_X][^\x1b]*\x1b\\"           # DCS/PM/APC/SOS
+    r"|\x1b\[[0-9;?<>=!]*[ -/]*[@-~]"      # CSI
+    r"|\x1b[@-Z\\-_]"                       # 2문자 ESC 시퀀스
+)
+# 개행/탭 제외 제어문자 제거
+_CTRL_STRIP = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+class _SessionLog:
+    """수신 바이트에서 ANSI/제어문자를 제거해 텍스트로 파일에 실시간 기록.
+
+    화면 스크롤백(5000줄) 한도와 무관하게, 로그 시작 이후 모든 출력을 저장한다.
+    """
+
+    _FLUSH_BYTES = 32768  # 이만큼 쌓이면 flush (매 청크 flush 방지)
+
+    def __init__(self, fh) -> None:
+        self._fh = fh
+        self._dec = codecs.getincrementaldecoder("utf-8")("replace")
+        self._pending = ""
+        self._unflushed = 0
+
+    def feed(self, data: bytes) -> None:
+        text = self._pending + self._dec.decode(data)
+        # 마지막 ESC 가 아직 미완성 시퀀스면 다음 데이터까지 보류(경계 처리)
+        idx = text.rfind("\x1b")
+        if idx != -1 and _ANSI_RE.search(text, idx) is None:
+            self._pending = text[idx:]
+            text = text[:idx]
+        else:
+            self._pending = ""
+        text = _ANSI_RE.sub("", text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = _CTRL_STRIP.sub("", text)
+        if not text:
+            return
+        try:
+            self._fh.write(text)
+            self._unflushed += len(text)
+            if self._unflushed >= self._FLUSH_BYTES:
+                self._fh.flush()
+                self._unflushed = 0
+        except Exception:
+            pass
+
+    def idle_flush(self) -> None:
+        """유휴 시(출력 소강) 남은 데이터를 디스크에 반영."""
+        if self._unflushed:
+            try:
+                self._fh.flush()
+            except Exception:
+                pass
+            self._unflushed = 0
+
+    def write_raw(self, text: str) -> None:
+        """이미 정제된 텍스트(현재 스크롤백 등)를 그대로 기록."""
+        try:
+            self._fh.write(text)
+            self._unflushed += len(text)
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        try:
+            if self._pending:
+                self._fh.write(_ANSI_RE.sub("", self._pending))
+            self._fh.flush()
+            self._fh.close()
+        except Exception:
+            pass
+
 Cell = Tuple[int, int]  # (row, col)
 
 
+_COLOR_CACHE: dict = {}  # (color, default_hex, bright) -> QColor (읽기전용 공유)
+
+
 def _resolve(color: str, default_hex: str, bright: bool = False) -> QColor:
+    key = (color, default_hex, bright)
+    cached = _COLOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    result = _resolve_uncached(color, default_hex, bright)
+    _COLOR_CACHE[key] = result
+    return result
+
+
+def _resolve_uncached(color: str, default_hex: str, bright: bool) -> QColor:
     if color == "default":
         return QColor(default_hex)
     name = color
@@ -53,28 +157,52 @@ def _resolve(color: str, default_hex: str, bright: bool = False) -> QColor:
 
 
 class _Reader(QThread):
-    """채널에서 바이트를 읽어 시그널로 전달하는 리더 스레드."""
+    """채널을 읽어 세션 로그 기록 + pyte 파싱(sink)을 모두 이 워커 스레드에서 수행.
 
-    data = Signal(bytes)
+    파싱을 GUI 밖으로 빼서 대량 출력에도 UI가 막히지 않게 한다. recv→sink 를
+    순차로 처리하므로, 파싱이 느리면 recv 가 자연히 느려져 SSH 백프레셔가 걸린다
+    (데이터 폐기 없이 완전 보존).
+    """
+
     closed = Signal()
 
-    def __init__(self, channel) -> None:
+    def __init__(self, channel, sink) -> None:
         super().__init__()
         self._channel = channel
+        self._sink = sink  # 위젯의 _feed(chunk): 락 하에 pyte.feed
         self._run = True
+        self._log: Optional[_SessionLog] = None
+        self._log_lock = threading.Lock()
+
+    def set_log(self, log: "Optional[_SessionLog]") -> "Optional[_SessionLog]":
+        """세션 로그를 교체하고 이전 로그를 반환(호출자가 close)."""
+        with self._log_lock:
+            old = self._log
+            self._log = log
+        return old
 
     def run(self) -> None:
         self._channel.settimeout(0.05)
         while self._run:
             try:
-                chunk = self._channel.recv(8192)
+                chunk = self._channel.recv(65536)
             except socket.timeout:
+                with self._log_lock:
+                    if self._log is not None:
+                        self._log.idle_flush()
                 continue
             except Exception:
                 break
             if not chunk:
                 break
-            self.data.emit(bytes(chunk))
+            with self._log_lock:
+                if self._log is not None:
+                    self._log.feed(chunk)
+            self._sink(chunk)  # pyte 파싱(위젯 락 하에)
+        with self._log_lock:
+            if self._log is not None:
+                self._log.close()
+                self._log = None
         self.closed.emit()
 
     def stop(self) -> None:
@@ -186,38 +314,50 @@ class TerminalWidget(QWidget):
         self._selecting = False
 
         self._dirty = False
+        self._lock = threading.RLock()  # screen/stream 접근 보호(리더 스레드 ↔ GUI)
+        self._log_path: Optional[str] = None
         self._flush_timer = QTimer(self)
-        self._flush_timer.timeout.connect(self._flush)
-        self._flush_timer.start(33)  # ~30fps
+        self._flush_timer.timeout.connect(self._tick)
+        self._flush_timer.start(33)  # ~30fps 리페인트 구동
 
-        self._reader = _Reader(channel)
-        self._reader.data.connect(self._on_data)
+        self._reader = _Reader(channel, self._feed)
         self._reader.closed.connect(self._on_closed)
         self._reader.start()
 
     # ------------------------------------------------------------ 입출력
-    def _on_data(self, data: bytes) -> None:
-        try:
-            self.stream.feed(data)
-        except Exception:
-            pass
+    def _feed(self, chunk: bytes) -> None:
+        """리더 스레드에서 호출: pyte 파싱(락 보호). 작은 조각으로 나눠 락 점유를
+        짧게 유지 → GUI 페인트가 조각 사이에 끼어들 수 있음."""
+        for i in range(0, len(chunk), 4096):
+            with self._lock:
+                try:
+                    self.stream.feed(chunk[i:i + 4096])
+                except Exception:
+                    pass
+            time.sleep(0)  # 락 공정성: 페인트/입력 스레드에 기회를 준다
         self._dirty = True
 
     def _on_closed(self) -> None:
         if not self._alive:
             return
         self._alive = False
-        try:
-            self.stream.feed("\r\n[\x1b[33m연결이 종료되었습니다\x1b[0m]\r\n".encode("utf-8"))
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                self.stream.feed(
+                    "\r\n[\x1b[33m연결이 종료되었습니다\x1b[0m]\r\n".encode("utf-8")
+                )
+            except Exception:
+                pass
         self._dirty = True
+        self._log_path = None  # 리더가 종료되며 로그도 닫힘
         self.session_closed.emit(self)
 
-    def _flush(self) -> None:
+    def _tick(self) -> None:
+        """GUI 타이머: 변경 시 스크롤바 갱신 + 리페인트 예약."""
         if self._dirty:
             self._dirty = False
-            self._update_scrollbar()
+            with self._lock:
+                self._update_scrollbar()
             self.update()
 
     # -------------------------------------------------------------- 스크롤
@@ -262,16 +402,17 @@ class TerminalWidget(QWidget):
         rows = max(1, int(self.height() / self._ch))
         self._cols, self._rows = cols, rows
         self._clear_selection()
-        try:
-            self.screen.resize(rows, cols)
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                self.screen.resize(rows, cols)
+            except Exception:
+                pass
+            self._update_scrollbar()
         if self._alive:
             try:
                 self.channel.resize_pty(width=cols, height=rows)
             except Exception:
                 pass
-        self._update_scrollbar()
         self.update()
 
     def _text_width(self) -> int:
@@ -284,17 +425,19 @@ class TerminalWidget(QWidget):
         if cols != self._cols or rows != self._rows:
             self._cols, self._rows = cols, rows
             self._clear_selection()
-            try:
-                self.screen.resize(rows, cols)
-            except Exception:
-                pass
+            with self._lock:
+                try:
+                    self.screen.resize(rows, cols)
+                except Exception:
+                    pass
             if self._alive:
                 try:
                     self.channel.resize_pty(width=cols, height=rows)
                 except Exception:
                     pass
             self._dirty = True
-        self._update_scrollbar()
+        with self._lock:
+            self._update_scrollbar()
         super().resizeEvent(event)
 
     # -------------------------------------------------------------- 렌더
@@ -304,53 +447,65 @@ class TerminalWidget(QWidget):
         p.setFont(self.font())
 
         cw, ch = self._cw, self._ch
-        cols = self.screen.columns
-        top_list = list(self.screen.history.top)
-        nb_top = len(top_list)
-        buffer = self.screen.buffer
-        start = self._vbar.value()
-
-        cursor = self.screen.cursor
-        show_cursor = (
-            self._alive and not cursor.hidden and self.hasFocus() and self._follow
-        )
         sel = self._ordered_selection()
         sel_bg = QColor(_SEL_BG)
         default_bg = QColor(_DEFAULT_BG)
+        ascent = self._ascent
+        view_texts: List[Optional[str]] = []
 
-        self._view_rows = []
-        for k in range(self._rows):
-            idx = start + k
-            buf_y = None
-            if 0 <= idx < nb_top:
-                row = top_list[idx]
+        # 화면 읽기·그리기는 락 하에서(리더 스레드의 pyte 파싱과 상호배제)
+        with self._lock:
+            cols = self.screen.columns
+            history = self.screen.history.top
+            nb_top = len(history)
+            buffer = self.screen.buffer
+            start = self._vbar.value()
+            if start < nb_top:
+                hist_rows = list(itertools.islice(history, start, start + self._rows))
             else:
-                buf_y = idx - nb_top
-                row = buffer[buf_y] if 0 <= buf_y < self.screen.lines else None
-            self._view_rows.append(row)
-            if row is None:
-                continue
-            for x in range(cols):
-                cell = row[x]
-                data = cell.data
-                fg = _resolve(cell.fg, _DEFAULT_FG, cell.bold)
-                bg = _resolve(cell.bg, _DEFAULT_BG)
-                is_cursor = (
-                    show_cursor and buf_y is not None
-                    and x == cursor.x and buf_y == cursor.y
-                )
-                if cell.reverse != is_cursor:
-                    fg, bg = bg, fg
-                selected = sel is not None and self._in_selection(k, x, sel)
-                if selected:
-                    bg = sel_bg
+                hist_rows = []
+            cursor = self.screen.cursor
+            show_cursor = (
+                self._alive and not cursor.hidden and self.hasFocus() and self._follow
+            )
+            lines = self.screen.lines
 
-                rect = QRectF(x * cw, k * ch, cw, ch)
-                if selected or bg != default_bg:
-                    p.fillRect(rect, bg)
-                if data and data != " ":
-                    p.setPen(fg)
-                    p.drawText(rect.x(), k * ch + self._ascent, data)
+            for k in range(self._rows):
+                idx = start + k
+                buf_y = None
+                if k < len(hist_rows):
+                    row = hist_rows[k]
+                else:
+                    buf_y = idx - nb_top
+                    row = buffer[buf_y] if 0 <= buf_y < lines else None
+                if row is None:
+                    view_texts.append(None)
+                    continue
+                chars = []
+                for x in range(cols):
+                    cell = row[x]
+                    ch_data = cell.data
+                    chars.append(ch_data or " ")
+                    fg = _resolve(cell.fg, _DEFAULT_FG, cell.bold)
+                    bg = _resolve(cell.bg, _DEFAULT_BG)
+                    is_cursor = (
+                        show_cursor and buf_y is not None
+                        and x == cursor.x and buf_y == cursor.y
+                    )
+                    if cell.reverse != is_cursor:
+                        fg, bg = bg, fg
+                    if sel is not None and self._in_selection(k, x, sel):
+                        bg = sel_bg
+                        rect = QRectF(x * cw, k * ch, cw, ch)
+                        p.fillRect(rect, bg)
+                    elif bg != default_bg:
+                        p.fillRect(QRectF(x * cw, k * ch, cw, ch), bg)
+                    if ch_data and ch_data != " ":
+                        p.setPen(fg)
+                        p.drawText(x * cw, k * ch + ascent, ch_data)
+                view_texts.append("".join(chars))
+        # 선택복사용 스냅샷(텍스트) — 락 밖에서도 안전
+        self._view_rows = view_texts
         p.end()
 
     # -------------------------------------------------------------- 선택
@@ -377,23 +532,22 @@ class TerminalWidget(QWidget):
         self._selecting = False
 
     def _selected_text(self) -> str:
+        # _view_rows 는 paintEvent 에서 만든 텍스트 스냅샷(락 불필요)
         sel = self._ordered_selection()
         if sel is None:
             return ""
         (r1, c1), (r2, c2) = sel
-        cols = self.screen.columns
         lines = []
         for r in range(r1, r2 + 1):
             if r < 0 or r >= len(self._view_rows):
                 continue
-            row = self._view_rows[r]
-            if row is None:
+            rowtext = self._view_rows[r]
+            if not rowtext:
                 lines.append("")
                 continue
             sc = c1 if r == r1 else 0
-            ec = c2 if r == r2 else cols - 1
-            chars = [(row[c].data or " ") for c in range(sc, ec + 1)]
-            lines.append("".join(chars).rstrip())
+            ec = c2 if r == r2 else len(rowtext) - 1
+            lines.append(rowtext[sc:ec + 1].rstrip())
         return "\n".join(lines)
 
     def mousePressEvent(self, event) -> None:
@@ -431,11 +585,100 @@ class TerminalWidget(QWidget):
         act_copy = menu.addAction("복사")
         act_copy.setEnabled(self._ordered_selection() is not None)
         act_paste = menu.addAction("붙여넣기")
+        menu.addSeparator()
+        act_save = menu.addAction("전체 내용 저장... (현재 스크롤백)")
+        if self._log_path is None:
+            act_log = menu.addAction("세션 로그 시작... (이후 전체 기록)")
+        else:
+            act_log = menu.addAction("세션 로그 중지")
         chosen = menu.exec(event.globalPos())
         if chosen == act_copy:
             self._copy()
         elif chosen == act_paste:
             self._paste()
+        elif chosen == act_save:
+            self.save_all_to_file()
+        elif chosen == act_log:
+            if self._log_path is None:
+                self.start_session_log()
+            else:
+                self.stop_session_log()
+
+    # ------------------------------------------------------- 세션 로그
+    def is_logging(self) -> bool:
+        return self._log_path is not None
+
+    def start_session_log(self) -> None:
+        host = self.client.info.host if (self.client and self.client.info) else "terminal"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "세션 로그 저장 시작", f"{host}-session.log",
+            "로그/텍스트 (*.log *.txt);;모든 파일 (*)",
+        )
+        if not path:
+            return
+        try:
+            fh = open(path, "w", encoding="utf-8")
+        except Exception as exc:
+            QMessageBox.critical(self, "실패", str(exc))
+            return
+        log = _SessionLog(fh)
+        existing = self.get_all_text()  # 현재까지의 스크롤백 먼저 기록
+        if existing:
+            log.write_raw(existing)
+        old = self._reader.set_log(log)  # 이후 출력은 리더 스레드에서 기록
+        if old is not None:
+            old.close()
+        self._log_path = path
+        QMessageBox.information(
+            self, "세션 로그 시작",
+            f"이후 모든 출력이 저장됩니다:\n{path}\n\n중지: 우클릭 → '세션 로그 중지'",
+        )
+
+    def stop_session_log(self) -> None:
+        if self._log_path is None:
+            return
+        old = self._reader.set_log(None)
+        if old is not None:
+            old.close()
+        path, self._log_path = self._log_path, None
+        QMessageBox.information(self, "세션 로그 중지", f"저장 완료:\n{path}")
+
+    # ------------------------------------------------------- 전체 내용 저장
+    def _row_text(self, row) -> str:
+        cols = self.screen.columns
+        return "".join((row[x].data or " ") for x in range(cols)).rstrip()
+
+    def get_all_text(self) -> str:
+        """스크롤백(히스토리) + 현재 화면 전체 텍스트."""
+        with self._lock:
+            lines = [self._row_text(r) for r in list(self.screen.history.top)]
+            buf = self.screen.buffer
+            for y in range(self.screen.lines):
+                lines.append(self._row_text(buf[y]))
+        while lines and not lines[-1].strip():  # 끝의 빈 줄 제거
+            lines.pop()
+        return ("\n".join(lines) + "\n") if lines else ""
+
+    def save_all_to_file(self) -> None:
+        text = self.get_all_text()
+        if not text.strip():
+            QMessageBox.information(self, "안내", "저장할 내용이 없습니다.")
+            return
+        host = self.client.info.host if (self.client and self.client.info) else "terminal"
+        default = f"{host}.log"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "터미널 내용 저장", default,
+            "로그/텍스트 (*.log *.txt);;모든 파일 (*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except Exception as exc:
+            QMessageBox.critical(self, "저장 실패", str(exc))
+            return
+        QMessageBox.information(self, "저장 완료", f"터미널 내용을 저장했습니다.\n{path}")
 
     def _copy(self) -> None:
         text = self._selected_text()
@@ -558,7 +801,8 @@ class TerminalWidget(QWidget):
     def _app_cursor_keys(self) -> bool:
         """vim 등이 켜는 애플리케이션 커서 키 모드(DECCKM) 여부."""
         try:
-            return _DECCKM in self.screen.mode
+            with self._lock:
+                return _DECCKM in self.screen.mode
         except Exception:
             return False
 
@@ -643,8 +887,9 @@ class TerminalWidget(QWidget):
     # ------------------------------------------------------------ 정리
     def shutdown(self) -> None:
         self._alive = False
+        self._log_path = None
         self._flush_timer.stop()
-        self._reader.stop()
+        self._reader.stop()       # run() 종료 시 세션 로그도 닫힘
         self._reader.wait(1000)
         try:
             self.channel.close()

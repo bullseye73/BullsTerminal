@@ -447,6 +447,9 @@ class MainWindow(QMainWindow):
 
         view_menu = self.menuBar().addMenu("보기")
         view_menu.addAction(self.clip_dock.toggleViewAction())
+        view_menu.addSeparator()
+        act_save_term = view_menu.addAction("활성 터미널 내용 저장...")
+        act_save_term.triggered.connect(self._on_save_terminal)
 
         # 시스템 클립보드 감시 + 현재 내용 시드
         QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
@@ -531,6 +534,13 @@ class MainWindow(QMainWindow):
         # '파일' 탭으로 전환 시 원격 목록 갱신
         if self.dock_tabs.currentWidget() is self.file_browser:
             self.file_browser.refresh_remote()
+
+    def _on_save_terminal(self) -> None:
+        term = self._current_terminal()
+        if term is None:
+            QMessageBox.information(self, "안내", "저장할 활성 터미널이 없습니다.")
+            return
+        term.save_all_to_file()
 
     def _on_terminal_tab_changed(self) -> None:
         # 활성 터미널이 바뀌면 상태바 + (파일 탭이 열려 있으면) 원격 목록 갱신
