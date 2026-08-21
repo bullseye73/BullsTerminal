@@ -379,15 +379,30 @@ class TerminalWidget(QWidget):
             self.cwd_changed.emit(self, path)
 
     def enable_cwd_reporting(self) -> None:
-        """셸(bash)에 프롬프트마다 현재 경로를 OSC7 로 보고하도록 1회 주입."""
+        """프롬프트마다 현재 경로를 OSC7 로 보고하도록 셸에 1회 주입.
+
+        bash 는 PROMPT_COMMAND 를 쓰지만, 임베디드(BusyBox ash/dash)는
+        PROMPT_COMMAND 를 지원하지 않으므로 PS1 확장으로 폴백한다.
+        (ash 의 PS1 파라미터 확장 기능이 켜져 있어야 함)
+        """
         if self._cwd_reporting or not self._alive:
             return
         self._cwd_reporting = True
-        emitter = r'printf "\033]7;file://%s%s\a" "${HOSTNAME}" "$PWD"'
-        cmd = (
-            " export PROMPT_COMMAND='" + emitter + "'"
+        # 한 번만 즉시 방출 + 프롬프트마다 방출 설정 (bash/ash 분기)
+        emit = r'printf "\033]7;file://%s%s\a" "${HOSTNAME}" "$PWD"'
+        bash_pc = (
+            "PROMPT_COMMAND='" + emit + "'"
             + '"${PROMPT_COMMAND:+;$PROMPT_COMMAND}"'
-            + "; " + emitter + "\r"
+        )
+        # ash/sh: ESC/BEL 은 printf 로 만든 변수로 넣고, ${PWD}는 리터럴로 남겨
+        # 프롬프트 표시 때 확장되게 한다(입력줄에 raw ESC 를 넣지 않음).
+        ash_ps1 = (
+            "__e=$(printf '\\033'); __b=$(printf '\\a'); "
+            "PS1=${__e}']7;file://${HOSTNAME}${PWD}'${__b}\"$PS1\""
+        )
+        cmd = (
+            ' if [ -n "$BASH_VERSION" ]; then ' + bash_pc
+            + "; else " + ash_ps1 + "; fi; " + emit + "\r"
         )
         self.send_text(cmd)
 
