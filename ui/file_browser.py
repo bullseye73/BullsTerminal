@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -142,7 +143,7 @@ class FileBrowser(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # 리모트(상단)
+        # ── 리모트(상단) 박스 ──
         self.remote_path_edit = QLineEdit()
         self.remote_path_edit.returnPressed.connect(self._on_remote_path_entered)
         r_up = QPushButton("상위")
@@ -158,11 +159,14 @@ class FileBrowser(QWidget):
         self.remote_tree.itemDoubleClicked.connect(self._on_remote_double)
         self.remote_tree.customContextMenuRequested.connect(self._remote_menu)
 
-        layout.addWidget(QLabel("리모트 (SSH) — 활성 터미널 연결"))
-        layout.addLayout(r_bar)
-        layout.addWidget(self.remote_tree, 1)
+        remote_box = QWidget()
+        rv = QVBoxLayout(remote_box)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.addWidget(QLabel("리모트 (SSH) — 활성 터미널 연결"))
+        rv.addLayout(r_bar)
+        rv.addWidget(self.remote_tree, 1)
 
-        # 전송 버튼
+        # ── 로컬(하단) 박스 (전송 버튼을 상단에 두어 경계 바로 아래 배치) ──
         act = QHBoxLayout()
         btn_down = QPushButton("▼ 다운로드")
         btn_up = QPushButton("▲ 업로드")
@@ -170,9 +174,7 @@ class FileBrowser(QWidget):
         btn_up.clicked.connect(self._upload)
         act.addWidget(btn_down)
         act.addWidget(btn_up)
-        layout.addLayout(act)
 
-        # 로컬(하단)
         self.local_path_edit = QLineEdit(self._local_path)
         self.local_path_edit.returnPressed.connect(self._on_local_path_entered)
         l_up = QPushButton("상위")
@@ -191,9 +193,26 @@ class FileBrowser(QWidget):
         self.local_tree.itemDoubleClicked.connect(self._on_local_double)
         self.local_tree.customContextMenuRequested.connect(self._local_menu)
 
-        layout.addWidget(QLabel("로컬 PC"))
-        layout.addLayout(l_bar)
-        layout.addWidget(self.local_tree, 1)
+        local_box = QWidget()
+        lv = QVBoxLayout(local_box)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.addLayout(act)
+        lv.addWidget(QLabel("로컬 PC"))
+        lv.addLayout(l_bar)
+        lv.addWidget(self.local_tree, 1)
+
+        # ── 리모트/로컬 경계를 드래그로 조절(세로 스플리터) ──
+        split = QSplitter(Qt.Vertical)
+        split.addWidget(remote_box)
+        split.addWidget(local_box)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 1)
+        split.setHandleWidth(8)
+        split.setChildrenCollapsible(False)
+        split.setStyleSheet(
+            "QSplitter::handle { background: #c0c0c0; margin: 2px 4px; border-radius: 2px; }"
+        )
+        layout.addWidget(split, 1)
 
     # --------------------------------------------------------- 아이콘/항목
     def _icon_for(self, name: str, is_dir: bool, local_full: Optional[str]):
