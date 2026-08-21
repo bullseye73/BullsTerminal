@@ -161,6 +161,7 @@ class MainWindow(QMainWindow):
         self._syncing = False  # 전체선택 체크박스 동기화 중 재귀 방지
         self._last_info: Optional[ConnectionInfo] = None  # 새 터미널 다이얼로그 프리필
         self._clip_history: List[str] = []  # 클립보드 기록(최신순, 세션 메모리)
+        self._sync_cwd = False  # 터미널 경로 ↔ 파일탭 리모트 동기화 옵션
         self._connecting = False              # 연결 진행 중 여부
         self._conn_worker: Optional[_ConnectWorker] = None  # 현재 연결 워커
         self._conn_workers: set = set()       # 실행 중 워커 참조(GC 방지)
@@ -426,7 +427,9 @@ class MainWindow(QMainWindow):
         clip_layout.addLayout(clip_btns)
 
         # 도크 안을 탭으로 구분: 클립보드 / 파일(SFTP)
-        self.file_browser = FileBrowser(self._active_transport, self)
+        self.file_browser = FileBrowser(
+            self._active_transport, on_sync_toggled=self._on_sync_toggled, parent=self
+        )
         self.dock_tabs = QTabWidget()
         self.dock_tabs.addTab(clip_box, "클립보드")
         self.dock_tabs.addTab(self.file_browser, "파일")
@@ -531,8 +534,16 @@ class MainWindow(QMainWindow):
         return None
 
     def _on_dock_tab_changed(self, _index: int) -> None:
-        # '파일' 탭으로 전환 시 원격 목록 갱신
+        # '파일' 탭으로 전환 시 원격 목록 갱신(동기화 시 현재 터미널 경로로)
         if self.dock_tabs.currentWidget() is self.file_browser:
+            self._sync_file_browser_to_terminal(force_refresh=True)
+
+    def _sync_file_browser_to_terminal(self, force_refresh: bool = False) -> None:
+        """활성 터미널의 경로로 파일탭 리모트를 맞춘다(동기화 옵션 시)."""
+        term = self._current_terminal()
+        if self._sync_cwd and term is not None and term.remote_cwd:
+            self.file_browser.set_remote_path(term.remote_cwd)
+        elif force_refresh:
             self.file_browser.refresh_remote()
 
     def _on_save_terminal(self) -> None:
@@ -543,13 +554,32 @@ class MainWindow(QMainWindow):
         term.save_all_to_file()
 
     def _on_terminal_tab_changed(self) -> None:
-        # 활성 터미널이 바뀌면 상태바 + (파일 탭이 열려 있으면) 원격 목록 갱신
+        # 활성 터미널이 바뀌면 상태바 + (파일 탭이 열려 있으면) 원격 목록 갱신/동기화
         self._update_connection_label()
         if (
             getattr(self, "file_browser", None) is not None
             and self.dock_tabs.currentWidget() is self.file_browser
         ):
-            self.file_browser.refresh_remote()
+            self._sync_file_browser_to_terminal(force_refresh=True)
+
+    def _on_terminal_cwd_changed(self, term, path: str) -> None:
+        # 터미널에서 cd 로 경로 변경(OSC7) → 동기화 옵션이면 리모트를 따라 이동
+        if (
+            self._sync_cwd
+            and term is self._current_terminal()
+            and self.dock_tabs.currentWidget() is self.file_browser
+        ):
+            self.file_browser.set_remote_path(path)
+
+    def _on_sync_toggled(self, enabled: bool) -> None:
+        self._sync_cwd = enabled
+        if enabled:
+            # 모든 터미널에 OSC7 리포팅 주입 후 현재 터미널 경로로 맞춤
+            for i in range(self.tabs.count()):
+                w = self.tabs.widget(i)
+                if isinstance(w, TerminalWidget) and w.is_alive():
+                    w.enable_cwd_reporting()
+            self._sync_file_browser_to_terminal(force_refresh=False)
 
     def _update_connection_label(self) -> None:
         term = self._current_terminal()
@@ -1010,12 +1040,15 @@ class MainWindow(QMainWindow):
         info = client.info
         term = TerminalWidget(channel, client=client, font=self._term_font)
         term.session_closed.connect(self._on_terminal_session_closed)
+        term.cwd_changed.connect(self._on_terminal_cwd_changed)
         self._term_counter += 1
         title = f"{info.username}@{info.host}" if info else f"터미널 {self._term_counter}"
         index = self.tabs.addTab(term, title)
         self.tabs.setCurrentIndex(index)
         term.setFocus()
         self._last_info = info
+        if self._sync_cwd:  # 동기화 켜져 있으면 새 터미널에도 OSC7 리포팅 주입
+            term.enable_cwd_reporting()
         self._update_connection_label()
 
     def _on_connect_fail(self, msg: str) -> None:

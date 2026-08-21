@@ -17,6 +17,7 @@ from typing import Callable, List, Optional, Tuple
 from PySide6.QtCore import QFileInfo, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFileDialog,
     QFileIconProvider,
     QHBoxLayout,
@@ -108,9 +109,12 @@ class _SftpWorker(QThread):
 
 
 class FileBrowser(QWidget):
-    def __init__(self, get_transport: Callable[[], object], parent=None) -> None:
+    def __init__(self, get_transport: Callable[[], object],
+                 on_sync_toggled: Optional[Callable[[bool], None]] = None,
+                 parent=None) -> None:
         super().__init__(parent)
         self._get_transport = get_transport  # -> paramiko.Transport | None
+        self._on_sync_toggled = on_sync_toggled
         self._sftp = None
         self._sftp_transport = None
         self._remote_path = "."
@@ -159,10 +163,20 @@ class FileBrowser(QWidget):
         self.remote_tree.itemDoubleClicked.connect(self._on_remote_double)
         self.remote_tree.customContextMenuRequested.connect(self._remote_menu)
 
+        self.sync_check = QCheckBox("터미널 경로 동기화")
+        self.sync_check.setToolTip(
+            "현재 터미널의 경로(cd)에 맞춰 리모트 목록을 자동 이동\n(OSC7 사용, bash 셸)"
+        )
+        self.sync_check.toggled.connect(self._sync_toggled)
+        r_head = QHBoxLayout()
+        r_head.addWidget(QLabel("리모트 (SSH) — 활성 터미널"))
+        r_head.addStretch(1)
+        r_head.addWidget(self.sync_check)
+
         remote_box = QWidget()
         rv = QVBoxLayout(remote_box)
         rv.setContentsMargins(0, 0, 0, 0)
-        rv.addWidget(QLabel("리모트 (SSH) — 활성 터미널 연결"))
+        rv.addLayout(r_head)
         rv.addLayout(r_bar)
         rv.addWidget(self.remote_tree, 1)
 
@@ -302,6 +316,20 @@ class FileBrowser(QWidget):
     def _on_remote_path_entered(self) -> None:
         self._remote_path = self.remote_path_edit.text().strip() or "."
         self.refresh_remote()
+
+    # ----------------------------------------------------- 경로 동기화
+    def sync_enabled(self) -> bool:
+        return self.sync_check.isChecked()
+
+    def _sync_toggled(self, checked: bool) -> None:
+        if self._on_sync_toggled is not None:
+            self._on_sync_toggled(checked)
+
+    def set_remote_path(self, path: str) -> None:
+        """외부(터미널 동기화)에서 원격 경로를 지정하고 목록 갱신."""
+        if path and path != self._remote_path:
+            self._remote_path = path
+            self.refresh_remote()
 
     # --------------------------------------------------------- 로컬
     def refresh_local(self) -> None:

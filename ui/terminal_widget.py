@@ -15,6 +15,7 @@ import re
 import socket
 import threading
 import time
+import urllib.parse
 from typing import List, Optional, Tuple
 
 import pyte
@@ -274,13 +275,17 @@ class TerminalScreen(pyte.HistoryScreen):
 
 
 class TerminalWidget(QWidget):
-    session_closed = Signal(object)  # 자기 자신을 전달
+    session_closed = Signal(object)      # 자기 자신을 전달
+    cwd_changed = Signal(object, str)    # (self, path) OSC7 로 감지한 현재 경로
 
     def __init__(self, channel, client=None, font=None, parent=None) -> None:
         super().__init__(parent)
         self.channel = channel
         self.client = client  # 이 터미널 전용 SSH 연결
         self._alive = True
+        self.remote_cwd: Optional[str] = None   # OSC7 로 감지된 현재 원격 경로
+        self._osc_pending = b""                  # OSC7 경계 분할 버퍼(리더 스레드)
+        self._cwd_reporting = False              # OSC7 리포팅 주입 여부
 
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
@@ -328,6 +333,7 @@ class TerminalWidget(QWidget):
     def _feed(self, chunk: bytes) -> None:
         """리더 스레드에서 호출: pyte 파싱(락 보호). 작은 조각으로 나눠 락 점유를
         짧게 유지 → GUI 페인트가 조각 사이에 끼어들 수 있음."""
+        self._scan_osc7(chunk)  # 현재 경로(OSC7) 추적 (락 불필요, 화면과 무관)
         for i in range(0, len(chunk), 4096):
             with self._lock:
                 try:
@@ -336,6 +342,54 @@ class TerminalWidget(QWidget):
                     pass
             time.sleep(0)  # 락 공정성: 페인트/입력 스레드에 기회를 준다
         self._dirty = True
+
+    # ------------------------------------------------------- 경로(OSC7) 추적
+    def _scan_osc7(self, chunk: bytes) -> None:
+        buf = self._osc_pending + chunk
+        self._osc_pending = b""
+        while True:
+            i = buf.find(b"\x1b]7;")
+            if i == -1:
+                self._osc_pending = buf[-3:]  # 'ESC]7' 분할 대비 소량 보관
+                return
+            j_bel = buf.find(b"\x07", i + 4)
+            j_st = buf.find(b"\x1b\\", i + 4)
+            ends = [j for j in (j_bel, j_st) if j != -1]
+            if not ends:
+                self._osc_pending = buf[i:] if (len(buf) - i) <= 4096 else b""
+                return
+            end = min(ends)
+            self._handle_osc7(buf[i + 4:end])
+            buf = buf[end + (1 if end == j_bel else 2):]
+
+    def _handle_osc7(self, payload: bytes) -> None:
+        try:
+            text = payload.decode("utf-8", "replace")
+        except Exception:
+            return
+        if not text.startswith("file://"):
+            return
+        rest = text[len("file://"):]
+        slash = rest.find("/")
+        if slash == -1:
+            return
+        path = urllib.parse.unquote(rest[slash:])
+        if path and path != self.remote_cwd:
+            self.remote_cwd = path
+            self.cwd_changed.emit(self, path)
+
+    def enable_cwd_reporting(self) -> None:
+        """셸(bash)에 프롬프트마다 현재 경로를 OSC7 로 보고하도록 1회 주입."""
+        if self._cwd_reporting or not self._alive:
+            return
+        self._cwd_reporting = True
+        emitter = r'printf "\033]7;file://%s%s\a" "${HOSTNAME}" "$PWD"'
+        cmd = (
+            " export PROMPT_COMMAND='" + emitter + "'"
+            + '"${PROMPT_COMMAND:+;$PROMPT_COMMAND}"'
+            + "; " + emitter + "\r"
+        )
+        self.send_text(cmd)
 
     def _on_closed(self) -> None:
         if not self._alive:
