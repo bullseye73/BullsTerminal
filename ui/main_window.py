@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -161,6 +162,7 @@ class MainWindow(QMainWindow):
         self._syncing = False  # 전체선택 체크박스 동기화 중 재귀 방지
         self._last_info: Optional[ConnectionInfo] = None  # 새 터미널 다이얼로그 프리필
         self._clip_history: List[str] = []  # 클립보드 기록(최신순, 세션 메모리)
+        self._clip_view_idx: List[int] = []  # 표시 행 → _clip_history 인덱스(필터 대응)
         self._sync_cwd = False  # 터미널 경로 ↔ 파일탭 리모트 동기화 옵션
         self._connecting = False              # 연결 진행 중 여부
         self._conn_worker: Optional[_ConnectWorker] = None  # 현재 연결 워커
@@ -419,10 +421,25 @@ class MainWindow(QMainWindow):
         clip_btns.addWidget(clip_clear)
         clip_btns.addStretch(1)
 
+        # 키워드 필터 (공백으로 구분한 여러 키워드를 모두 포함하는 항목만 표시)
+        self.clip_filter = QLineEdit()
+        self.clip_filter.setPlaceholderText("키워드 필터 (공백으로 여러 개, 대소문자 무시)")
+        self.clip_filter.setClearButtonEnabled(True)
+        self.clip_filter.setToolTip(
+            "입력한 키워드를 모두 포함하는 항목만 표시합니다.\n예: systemctl nginx"
+        )
+        self.clip_filter.textChanged.connect(self._refresh_clip_list)
+        self.clip_count = QLabel("0")
+        self.clip_count.setToolTip("표시/전체 개수")
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(self.clip_filter, 1)
+        filter_row.addWidget(self.clip_count)
+
         clip_box = QWidget()
         clip_layout = QVBoxLayout(clip_box)
         clip_layout.setContentsMargins(4, 4, 4, 4)
         clip_layout.addWidget(QLabel("클릭 → 입력창 / 더블클릭 → 실행"))
+        clip_layout.addLayout(filter_row)
         clip_layout.addWidget(self.clip_list, 1)
         clip_layout.addLayout(clip_btns)
 
@@ -473,40 +490,57 @@ class MainWindow(QMainWindow):
         self._refresh_clip_list()
 
     def _refresh_clip_list(self) -> None:
+        terms = [w for w in self.clip_filter.text().lower().split() if w]
         self.clip_list.blockSignals(True)
         self.clip_list.clear()
-        for t in self._clip_history:
+        self._clip_view_idx = []
+        for i, t in enumerate(self._clip_history):
+            if terms and not all(w in t.lower() for w in terms):
+                continue
             first = t.strip().splitlines()[0] if t.strip() else ""
             if len(first) > 80:
                 first = first[:80] + "…"
             item = QListWidgetItem(first)
             item.setToolTip(t)
             self.clip_list.addItem(item)
+            self._clip_view_idx.append(i)
         self.clip_list.blockSignals(False)
+        total = len(self._clip_history)
+        shown = len(self._clip_view_idx)
+        self.clip_count.setText(f"{shown}/{total}" if terms else str(total))
 
-    def _selected_clip_rows(self) -> List[int]:
-        return sorted(self.clip_list.row(it) for it in self.clip_list.selectedItems())
+    def _clip_index_at(self, row: int) -> int:
+        """표시 행 → _clip_history 인덱스 (없으면 -1)."""
+        if 0 <= row < len(self._clip_view_idx):
+            return self._clip_view_idx[row]
+        return -1
+
+    def _selected_clip_indices(self) -> List[int]:
+        out = []
+        for it in self.clip_list.selectedItems():
+            idx = self._clip_index_at(self.clip_list.row(it))
+            if idx >= 0:
+                out.append(idx)
+        return sorted(out)
 
     def _on_clip_selection_changed(self) -> None:
-        rows = self._selected_clip_rows()
-        texts = [self._clip_history[r] for r in rows if 0 <= r < len(self._clip_history)]
+        texts = [self._clip_history[i] for i in self._selected_clip_indices()]
         if texts:
             # 여러 개 선택 시 줄바꿈으로 이어 입력창에 표시(줄마다 실행 가능)
             self.cmd_edit.setPlainText("\n".join(texts))
 
     def _on_clip_run(self, item: QListWidgetItem) -> None:
-        row = self.clip_list.row(item)
-        if 0 <= row < len(self._clip_history):
-            self.cmd_edit.setPlainText(self._clip_history[row])
+        idx = self._clip_index_at(self.clip_list.row(item))
+        if idx >= 0:
+            self.cmd_edit.setPlainText(self._clip_history[idx])
             self._on_send_cmd()
 
     def _on_clip_delete(self) -> None:
-        rows = self._selected_clip_rows()
-        if not rows:
+        indices = self._selected_clip_indices()
+        if not indices:
             return
-        for r in sorted(rows, reverse=True):  # 뒤에서부터 삭제(인덱스 보존)
-            if 0 <= r < len(self._clip_history):
-                del self._clip_history[r]
+        for i in sorted(indices, reverse=True):  # 뒤에서부터 삭제(인덱스 보존)
+            del self._clip_history[i]
         self._refresh_clip_list()
 
     def _on_clip_clear(self) -> None:
