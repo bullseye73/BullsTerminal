@@ -1,17 +1,41 @@
-"""명령 그룹 저장소: ~/.config/rsCommand/commands.yaml 로드/저장."""
+"""명령 그룹 저장소: ~/.config/bullsTerminal/commands.yaml 로드/저장."""
 from __future__ import annotations
 
 import os
+import shutil
 from typing import List
 
 import yaml
 
 from core.models import Command, Group
 
-CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "rsCommand")
+CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "bullsTerminal")
+LEGACY_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "rsCommand")
 COMMANDS_PATH = os.path.join(CONFIG_DIR, "commands.yaml")
 SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.yaml")
 FAVORITES_PATH = os.path.join(CONFIG_DIR, "favorites.yaml")
+
+
+def _migrate_legacy_config() -> None:
+    """이전 이름(rsCommand)으로 저장된 설정을 새 폴더로 1회 복사.
+
+    기존 폴더는 그대로 남겨 두어 구버전으로 되돌려도 문제가 없게 한다.
+    """
+    if os.path.isdir(CONFIG_DIR) or not os.path.isdir(LEGACY_CONFIG_DIR):
+        return
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        for name in os.listdir(LEGACY_CONFIG_DIR):
+            if not name.endswith((".yaml", ".yml")):
+                continue
+            src = os.path.join(LEGACY_CONFIG_DIR, name)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(CONFIG_DIR, name))
+    except OSError:
+        pass  # 이전 설정을 못 옮겨도 기본값으로 정상 동작
+
+
+_migrate_legacy_config()
 
 
 def load_favorites() -> "list[dict]":
@@ -176,5 +200,5 @@ def import_groups(path: str) -> List[Group]:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict) or "groups" not in data:
-        raise ValueError("올바른 rsCommand 명령 백업 파일이 아닙니다.")
+        raise ValueError("올바른 bullsTerminal 명령 백업 파일이 아닙니다.")
     return [Group.from_dict(g) for g in (data.get("groups") or [])]

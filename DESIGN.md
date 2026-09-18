@@ -1,4 +1,4 @@
-# rsCommand — 설계 문서
+# bullsTerminal — 설계 문서
 
 SSH로 연결한 단일 타겟에 **기능별로 구성한 명령어를 일괄 실행**하는 우분투 데스크톱 GUI 앱.
 
@@ -74,7 +74,7 @@ SSH로 연결한 단일 타겟에 **기능별로 구성한 명령어를 일괄 �
 
 ## 3. 데이터 모델 (명령 저장 포맷)
 
-`~/.config/rsCommand/commands.yaml` (앱 내 편집 + 직접 편집 모두 가능)
+`~/.config/bullsTerminal/commands.yaml` (앱 내 편집 + 직접 편집 모두 가능)
 
 ```yaml
 groups:
@@ -97,14 +97,14 @@ groups:
         stop_on_error: true
 ```
 
-- 연결 프로필(선택): `~/.config/rsCommand/profiles.yaml`에 host/port/user만 저장(비밀번호 제외)해 재입력 편의 제공 — 2차 개선 항목.
+- 연결 프로필(선택): `~/.config/bullsTerminal/profiles.yaml`에 host/port/user만 저장(비밀번호 제외)해 재입력 편의 제공 — 2차 개선 항목.
 
 ---
 
 ## 4. 아키텍처 (모듈 구조)
 
 ```
-rsCommand/
+bullsTerminal/
 ├── main.py                  # 진입점: QApplication → 연결 다이얼로그 → 메인 윈도우
 ├── ssh/
 │   ├── client.py            # Paramiko 래퍼: connect, exec_command, 스트리밍 출력
@@ -141,7 +141,7 @@ rsCommand/
 
 ```bash
 sudo apt install python3-venv python3-pip -y
-cd /path/to/rsCommand           # (Samba 공유 위치)
+cd /path/to/bullsTerminal       # (Samba 공유 위치)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

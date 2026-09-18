@@ -45,6 +45,8 @@ from ui.file_browser import FileBrowser
 from ui.terminal_widget import TerminalWidget
 
 
+APP_NAME = "bullsTerminal"
+
 _URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*://")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # 제어문자(탭/개행 제외)
 _FIRST_TOKEN_RE = re.compile(r"^([A-Za-z_][\w.+-]*)")
@@ -174,7 +176,7 @@ class MainWindow(QMainWindow):
         self._term_font = QFont(s["font_family"], s["font_size"])
         self._term_font.setStyleHint(QFont.Monospace)
 
-        self.setWindowTitle("rsCommand — SSH 일괄 명령 실행")
+        self.setWindowTitle(f"{APP_NAME} — SSH 터미널 · 일괄 명령 실행")
         self.resize(1180, 760)
 
         self._build_ui()
@@ -695,7 +697,7 @@ class MainWindow(QMainWindow):
     def _on_export_commands(self) -> None:
         """명령 그룹 전체를 파일로 백업."""
         path, _ = QFileDialog.getSaveFileName(
-            self, "명령 백업 저장", "rscommand-commands.yaml",
+            self, "명령 백업 저장", "bullsterminal-commands.yaml",
             "YAML 파일 (*.yaml *.yml);;모든 파일 (*)",
         )
         if not path:

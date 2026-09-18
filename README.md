@@ -1,12 +1,21 @@
-# rsCommand
+<img src="assets/bullsterminal.svg" width="88" align="left" alt="bullsTerminal 아이콘" hspace="12">
 
-SSH로 연결한 단일 타겟에 **기능별로 구성한 명령어를 일괄 실행**하는 우분투 데스크톱 GUI 앱.
+# bullsTerminal
+
+SSH로 연결한 타겟에서 **대화형 터미널 + 기능별 명령 일괄 실행 + SFTP 파일 전송**을 제공하는
+데스크톱 GUI 앱(우분투·윈도우).
 (PySide6 + Paramiko + YAML) — 자세한 설계는 [DESIGN.md](DESIGN.md) 참고.
+
+<br clear="left">
+
+> 이전 이름은 `rsCommand` 입니다. 기존 설정(`~/.config/rsCommand/*.yaml`)은 최초 실행 시
+> `~/.config/bullsTerminal/` 로 **자동 복사**되므로 명령·즐겨찾기를 그대로 사용할 수 있습니다.
+> (원본은 지우지 않습니다.)
 
 ## 설치 & 실행 (우분투 데스크톱)
 
 ```bash
-cd /path/to/rsCommand          # Samba 공유 위치
+cd /path/to/bullsTerminal      # 소스 위치(Samba 공유 가능)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -30,7 +39,7 @@ python main.py
 - **메뉴 / 아이콘 버튼**:
   - 메뉴바 `연결`(새 터미널·재연결·연결끊기), `설정`(글꼴·크기 변경), `명령 관리`(백업·복원)
   - 상단 우측 아이콘 버튼: 글꼴 / 재연결 / 연결끊기 (메뉴와 동일 기능, 빠른 접근)
-- **폰트 변경**: `설정 → 글꼴·크기 변경`(또는 상단 글꼴 아이콘)으로 터미널·명령 입력창의 **폰트/크기**를 바꿉니다(모든 터미널 탭 즉시 적용, `~/.config/rsCommand/settings.yaml`에 저장). 기본 Monospace 12pt.
+- **폰트 변경**: `설정 → 글꼴·크기 변경`(또는 상단 글꼴 아이콘)으로 터미널·명령 입력창의 **폰트/크기**를 바꿉니다(모든 터미널 탭 즉시 적용, `~/.config/bullsTerminal/settings.yaml`에 저장). 기본 Monospace 12pt.
 - **탭별 다른 IP 연결**: 각 터미널 탭은 **자신의 SSH 연결**을 가집니다. `+ 터미널`을 누르면 연결 다이얼로그가 떠서 원하는 호스트/IP로 연결할 수 있습니다(직전 연결 정보가 프리필됨 → 같은 서버면 바로 `연결`).
 
 배치 실행 결과도 **터미널에서 그대로** 확인합니다(별도 배치 콘솔 없음).
@@ -50,7 +59,7 @@ python main.py
 ## 사용법 — 대화형 터미널
 
 - 우상단 `+ 터미널`을 누르면 연결 다이얼로그가 뜨고, 지정한 호스트로 **새 터미널 탭**이 열립니다. **탭마다 다른 IP**로 연결할 수 있습니다.
-- **즐겨찾기(빠른 연결)**: 연결 다이얼로그 상단에서 즐겨찾기를 **선택**(입력 자동 채움)하거나, 현재 입력을 **`저장`**(이름 지정, 비밀번호 저장 여부 선택)/**`삭제`** 할 수 있습니다. 메뉴 **`연결 → 즐겨찾기`** 에서 항목을 클릭하면 **바로 연결**(비밀번호 저장 시 즉시, 아니면 비밀번호만 입력)됩니다. 저장 위치: `~/.config/rsCommand/favorites.yaml`. ⚠ 비밀번호를 저장하면 **평문**으로 기록됩니다.
+- **즐겨찾기(빠른 연결)**: 연결 다이얼로그 상단에서 즐겨찾기를 **선택**(입력 자동 채움)하거나, 현재 입력을 **`저장`**(이름 지정, 비밀번호 저장 여부 선택)/**`삭제`** 할 수 있습니다. 메뉴 **`연결 → 즐겨찾기`** 에서 항목을 클릭하면 **바로 연결**(비밀번호 저장 시 즉시, 아니면 비밀번호만 입력)됩니다. 저장 위치: `~/.config/bullsTerminal/favorites.yaml`. ⚠ 비밀번호를 저장하면 **평문**으로 기록됩니다.
 - pyte 기반 완전 에뮬레이터라 **vim/htop/top/색상** 등 전체화면 TUI도 정상 동작합니다.
 - **기능키 전반 지원** (xterm 규격):
   - Tab / Shift+Tab / Esc / Backspace / Enter
@@ -74,14 +83,14 @@ python main.py
 - 기능 그룹과 명령 목록은 **이름(라벨) 기준 자동 정렬**됩니다(대소문자 무시).
 - 좌측 패널의 **기능 그룹 / 명령 목록 사이 경계를 드래그**해 높이를 조절할 수 있습니다(좌우 패널 경계도 드래그 가능).
 - 명령 옵션: **실행 전 확인창** (`confirm`, 위험 명령용)
-- 저장 위치: `~/.config/rsCommand/commands.yaml` (직접 편집도 가능)
+- 저장 위치: `~/.config/bullsTerminal/commands.yaml` (직접 편집도 가능)
 
 ### 백업 / 복원 (다른 PC로 이전)
 
 - 상단 메뉴 **`명령 관리`**:
   - **명령 백업 (내보내기)** → 그룹·명령 전체를 YAML 파일로 저장.
   - **명령 복원 (가져오기)** → 백업 파일을 선택해 불러오기. **병합**(기존에 추가, 중복 명령 제외) 또는 **교체**(기존 대체) 선택 가능.
-- 백업 파일을 USB/네트워크로 옮겨 다른 PC의 rsCommand에서 `복원`하면 동일한 명령 세트를 사용할 수 있습니다.
+- 백업 파일을 USB/네트워크로 옮겨 다른 PC의 bullsTerminal에서 `복원`하면 동일한 명령 세트를 사용할 수 있습니다.
 
 ## sudo 명령
 
@@ -101,7 +110,7 @@ PyInstaller는 크로스 컴파일이 안 되므로 **각 OS에서 각각 빌드
 ### 리눅스
 ```bash
 bash build-linux.sh
-# 산출물: ~/rscommand-build/dist/rsCommand
+# 산출물: ~/bullsterminal-build/dist/bullsTerminal
 ```
 - 배포 대상 중 **가장 오래된 배포판**에서 빌드해야 glibc 호환성이 좋습니다.
 - 실행 머신에 xcb 라이브러리 필요: `sudo apt install -y libxcb-cursor0 libxkbcommon-x11-0`
@@ -110,8 +119,23 @@ bash build-linux.sh
 ### 윈도우
 ```bat
 build-windows.bat
-:: 산출물: dist\rsCommand.exe
+:: 산출물: dist\bullsTerminal.exe
 ```
+- 실행파일에 **앱 아이콘이 내장**되며(작업표시줄/탐색기), 바로 가기를 만들어 쓰면 됩니다.
+
+### 아이콘 · 바로가기
+- 아이콘 원본: [`assets/bullsterminal.svg`](assets/bullsterminal.svg) (터미널 창 + 프롬프트 `>_` + 자물쇠 = secure shell).
+  `assets/bullsterminal.ico`(16~256px 멀티 사이즈, 윈도우)와 `assets/bullsterminal.png`(256px)는
+  아래 명령으로 다시 만들 수 있습니다(외부 의존성 없음).
+  ```bash
+  python tools/make_icon.py
+  ```
+- **우분투 메뉴 등록**(아이콘·런처·검색):
+  ```bash
+  ./packaging/install-linux.sh ~/bullsterminal-build/dist/bullsTerminal
+  ```
+  실행파일은 `~/.local/bin`, 아이콘은 `~/.local/share/icons/hicolor/...`,
+  런처는 `~/.local/share/applications/bullsTerminal.desktop` 에 설치됩니다.
 
 ### 참고
 - onefile 실행파일은 크기가 크고(약 100~200MB) 최초 실행 시 압축 해제로 조금 느립니다.
@@ -120,12 +144,16 @@ build-windows.bat
 ## 구조
 
 ```
-main.py           진입점 (연결 다이얼로그 → 메인 윈도우)
+main.py           진입점 (앱 아이콘 설정 → 연결 다이얼로그 → 메인 윈도우)
 core/models.py    Group / Command 데이터 모델
-core/store.py     commands.yaml 로드/저장
+core/store.py     commands.yaml 로드/저장 (+ 구 rsCommand 설정 자동 이전)
+core/resources.py 번들/소스 공통 리소스 경로 해석
 ssh/client.py     Paramiko 래퍼 (비밀번호 인증, 대화형 셸 채널)
 ui/connect_dialog.py  연결 입력
 ui/main_window.py     메인 (좌측 명령패널 + 우측 터미널 탭)
 ui/command_editor.py  명령 추가·편집
 ui/terminal_widget.py pyte 기반 대화형 터미널 위젯
+assets/               앱 아이콘 (svg 원본 / ico / png)
+tools/make_icon.py    아이콘 생성기 (표준 라이브러리만 사용)
+packaging/            리눅스 .desktop 런처 + 설치 스크립트
 ```

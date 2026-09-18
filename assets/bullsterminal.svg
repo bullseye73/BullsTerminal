@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>bullsTerminal</title>
+  <!-- SSH 아이콘: 터미널 창 + 프롬프트(>_) + 자물쇠(secure shell) -->
+  <!-- 이 도형 정의는 tools/make_icon.py 와 동일합니다(수정 시 양쪽 모두 반영). -->
+  <defs>
+    <clipPath id="win">
+      <rect x="8" y="8" width="240" height="240" rx="52"/>
+    </clipPath>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#151B26"/>
+
+  <g clip-path="url(#win)">
+    <!-- 타이틀바 -->
+    <rect x="8" y="8" width="240" height="50" fill="#202938"/>
+    <rect x="8" y="58" width="240" height="3.5" fill="#2E3A4E"/>
+
+    <!-- 테두리 -->
+    <rect x="9.5" y="9.5" width="237" height="237" rx="50.5" fill="none" stroke="#2E3A4E" stroke-width="3"/>
+
+    <!-- 신호등 -->
+    <circle cx="40" cy="34" r="7" fill="#FF5F57"/>
+    <circle cx="68" cy="34" r="7" fill="#FEBC2E"/>
+    <circle cx="96" cy="34" r="7" fill="#28C840"/>
+
+    <!-- 자물쇠 (배경색 여백으로 프롬프트와 분리) -->
+    <rect x="159" y="175" width="74" height="60" rx="15" fill="#151B26"/>
+    <path d="M177 180 A19.5 19.5 0 0 1 215 180" fill="none" stroke="#151B26" stroke-width="19"/>
+    <path d="M176.5 180 A19.5 19.5 0 0 1 215.5 180" fill="none" stroke="#F2B441" stroke-width="9"/>
+    <rect x="164" y="180" width="64" height="50" rx="10" fill="#F2B441"/>
+    <circle cx="196" cy="202" r="6" fill="#151B26"/>
+    <rect x="193" y="202" width="6" height="14" rx="3" fill="#151B26"/>
+
+    <!-- 프롬프트 >_ -->
+    <path d="M56 92 L96 124 L56 156" fill="none" stroke="#46D17F" stroke-width="18"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="108" y="138" width="56" height="18" rx="9" fill="#46D17F"/>
+  </g>
+</svg>

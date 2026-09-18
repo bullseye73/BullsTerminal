@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=bullsTerminal
+GenericName=SSH Terminal
+Comment=SSH terminal with batch command execution and SFTP browser
+Comment[ko]=SSH 터미널 · 일괄 명령 실행 · 파일 전송
+Exec=bullsTerminal
+Icon=bullsterminal
+Terminal=false
+StartupNotify=true
+StartupWMClass=bullsTerminal
+Categories=Network;RemoteAccess;System;TerminalEmulator;
+Keywords=ssh;sftp;terminal;remote;console;

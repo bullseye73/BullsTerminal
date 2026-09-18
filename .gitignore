@@ -23,5 +23,5 @@ Thumbs.db
 *.swp
 .claude/
 
-# 앱 런타임 설정(사용자별, ~/.config/rsCommand) — 저장소에 포함하지 않음
+# 앱 런타임 설정(사용자별, ~/.config/bullsTerminal) — 저장소에 포함하지 않음
 commands.yaml
