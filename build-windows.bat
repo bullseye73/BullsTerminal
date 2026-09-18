@@ -45,7 +45,7 @@ if errorlevel 1 (
 )
 
 echo [3/4] 실행파일 빌드...
-pyinstaller --clean -y --onefile --windowed --name bullsTerminal --icon assets\bullsterminal.ico --add-data "assets;assets" --hidden-import pyte main.py
+pyinstaller --clean -y --onefile --windowed --name bullsTerminal --icon "%~dp0assets\bullsterminal.ico" --add-data "%~dp0assets;assets" --hidden-import pyte main.py
 if errorlevel 1 (
     echo 빌드 실패
     echo   - bullsTerminal.exe 가 실행 중이면 종료 후 다시 시도하세요.

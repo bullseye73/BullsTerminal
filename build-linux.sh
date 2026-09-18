@@ -4,6 +4,7 @@
 # ※ 배포 대상 중 가장 오래된 배포판에서 빌드해야 glibc 호환성이 좋습니다.
 set -e
 cd "$(dirname "$0")"
+ROOT="$PWD"
 
 # 빌드 산출물/작업 폴더는 홈(실행 가능 경로)에 둔다.
 # (Samba 공유는 noexec 로 마운트돼 실행이 막히는 경우가 많음)
@@ -16,11 +17,12 @@ source "$VENV/bin/activate"
 pip install --upgrade pip
 pip install -r requirements-dev.txt
 
+# --add-data 의 원본 경로는 --specpath(= $BUILD) 기준으로 해석되므로 절대경로로 준다.
 pyinstaller --clean -y \
     --onefile --windowed \
     --name bullsTerminal \
     --hidden-import pyte \
-    --add-data "assets:assets" \
+    --add-data "$ROOT/assets:assets" \
     --distpath "$BUILD/dist" \
     --workpath "$BUILD/work" \
     --specpath "$BUILD" \
