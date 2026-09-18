@@ -4,26 +4,45 @@
 #   - 아이콘   → ~/.local/share/icons/hicolor/{scalable,256x256}/apps/bullsterminal.*
 #   - 실행기   → ~/.local/share/applications/bullsTerminal.desktop
 #
-# 사용법:  ./packaging/install-linux.sh [빌드된_실행파일_경로]
+# 사용법:  ./packaging/install-linux.sh [빌드_산출물_경로]
 #          (생략 시 ~/bullsterminal-build/dist/bullsTerminal 사용)
+#          onefile 산출물(파일)과 onedir 산출물(폴더) 모두 받습니다.
 set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-BIN="${1:-$HOME/bullsterminal-build/dist/bullsTerminal}"
-if [ ! -f "$BIN" ]; then
-    echo "[오류] 실행파일을 찾을 수 없습니다: $BIN"
+SRC="${1:-$HOME/bullsterminal-build/dist/bullsTerminal}"
+if [ ! -e "$SRC" ]; then
+    echo "[오류] 빌드 산출물을 찾을 수 없습니다: $SRC"
     echo "       먼저 ./build-linux.sh 로 빌드하거나 경로를 인자로 넘기세요."
     exit 1
 fi
 
 BIN_DIR="$HOME/.local/bin"
+LIB_DIR="$HOME/.local/lib/bullsTerminal"
 ICON_DIR="$HOME/.local/share/icons/hicolor"
 APP_DIR="$HOME/.local/share/applications"
 mkdir -p "$BIN_DIR" "$APP_DIR" \
          "$ICON_DIR/scalable/apps" "$ICON_DIR/256x256/apps"
 
-install -m 755 "$BIN" "$BIN_DIR/bullsTerminal"
+if [ -d "$SRC" ]; then
+    # onedir: 폴더를 통째로 ~/.local/lib 에 두고 ~/.local/bin 에 링크
+    if [ ! -x "$SRC/bullsTerminal" ]; then
+        echo "[오류] 실행파일이 없습니다: $SRC/bullsTerminal"
+        exit 1
+    fi
+    rm -rf "$LIB_DIR"
+    mkdir -p "$(dirname "$LIB_DIR")"
+    cp -a "$SRC" "$LIB_DIR"
+    ln -sfn "$LIB_DIR/bullsTerminal" "$BIN_DIR/bullsTerminal"
+    echo "설치 형태: onedir ($LIB_DIR)"
+else
+    # onefile: 실행파일 하나만 복사 (이전 onedir 설치 흔적/심볼릭 링크 제거 후)
+    rm -rf "$LIB_DIR"
+    rm -f "$BIN_DIR/bullsTerminal"
+    install -m 755 "$SRC" "$BIN_DIR/bullsTerminal"
+    echo "설치 형태: onefile"
+fi
 install -m 644 "$ROOT/assets/bullsterminal.svg" "$ICON_DIR/scalable/apps/bullsterminal.svg"
 install -m 644 "$ROOT/assets/bullsterminal.png" "$ICON_DIR/256x256/apps/bullsterminal.png"
 

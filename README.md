@@ -109,12 +109,24 @@ PyInstaller는 크로스 컴파일이 안 되므로 **각 OS에서 각각 빌드
 
 ### 리눅스
 ```bash
-bash build-linux.sh
-# 산출물: ~/bullsterminal-build/dist/bullsTerminal
+bash build-linux.sh            # onefile: 단일 실행파일
+bash build-linux.sh --onedir   # onedir : 폴더 배포(해제 없음 → 시작 빠름, /tmp 불필요)
+# 산출물: ~/bullsterminal-build/dist/bullsTerminal  (onedir 은 같은 이름의 폴더)
 ```
 - 배포 대상 중 **가장 오래된 배포판**에서 빌드해야 glibc 호환성이 좋습니다.
 - 실행 머신에 xcb 라이브러리 필요: `sudo apt install -y libxcb-cursor0 libxkbcommon-x11-0`
 - Samba 공유(noexec)에서는 실행이 막히므로 산출물을 로컬 경로(홈 등)에 두고 실행하세요(스크립트가 홈에 생성함).
+- 앱이 쓰지 않는 PySide6 모듈(Qml/Quick/WebEngine/3D/Charts/Multimedia 등)은 번들에서 제외해 크기를 줄입니다.
+
+#### 실행 시 `Failed to extract ...: decompression resulted in return code -1`
+**onefile** 실행파일은 실행할 때마다 `$TMPDIR`(기본 `/tmp`)에 Qt 전체를 풀어 놓습니다.
+이 오류는 **압축 해제 실패가 아니라 임시 폴더 쓰기 실패**(대개 용량 부족)입니다.
+```bash
+df -h /tmp                                   # 남은 용량 확인
+rm -rf /tmp/_MEI*                            # 실패한 실행이 남긴 찌꺼기 정리
+TMPDIR=$HOME/.cache ~/bullsterminal-build/dist/bullsTerminal   # 여유 있는 위치에 해제
+```
+근본적으로 피하려면 `--onedir` 로 빌드하세요(해제 과정 자체가 없어 시작도 빠릅니다).
 
 ### 윈도우
 ```bat
@@ -130,7 +142,7 @@ build-windows.bat
   ```bash
   python tools/make_icon.py
   ```
-- **우분투 메뉴 등록**(아이콘·런처·검색):
+- **우분투 메뉴 등록**(아이콘·런처·검색) — onefile/onedir 산출물 모두 지원:
   ```bash
   ./packaging/install-linux.sh ~/bullsterminal-build/dist/bullsTerminal
   ```
