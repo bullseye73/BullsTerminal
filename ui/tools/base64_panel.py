@@ -1,4 +1,4 @@
-"""유틸: Base64 인코딩 / 디코딩."""
+"""도구: Base64 인코딩 / 디코딩."""
 from __future__ import annotations
 
 import base64
@@ -7,7 +7,7 @@ from typing import List
 
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QPushButton, QWidget
 
-from ui.utils.base_panel import TextUtilPanel
+from ui.tools.base_panel import TextUtilPanel
 
 # 디코딩 시 허용할 문자(표준 + URL-safe 알파벳, 패딩 포함)
 _B64_CHARS = set(
@@ -23,7 +23,7 @@ def encode_base64(text: str, url_safe: bool = False) -> str:
 
 
 def b64_to_bytes(text: str) -> bytes:
-    """관대한 Base64 → bytes 변환 (다른 유틸에서도 재사용).
+    """관대한 Base64 → bytes 변환 (다른 도구에서도 재사용).
 
     공백/줄바꿈은 무시하고, URL-safe(`-_`) 알파벳과 빠진 패딩(`=`)도 받아들인다.
     잘못된 입력은 ValueError.

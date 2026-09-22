@@ -43,7 +43,7 @@ from ui.command_editor import CommandEditor
 from ui.connect_dialog import ConnectDialog
 from ui.file_browser import FileBrowser
 from ui.terminal_widget import TerminalWidget
-from ui.utils import UTIL_SPECS, UtilDock, UtilSpec
+from ui.tools import CLIPBOARD, FILES, TOOL_SPECS, ToolSpec
 
 
 APP_NAME = "bullsTerminal"
@@ -167,8 +167,8 @@ class MainWindow(QMainWindow):
         self._clip_history: List[str] = []  # 클립보드 기록(최신순, 세션 메모리)
         self._clip_view_idx: List[int] = []  # 표시 행 → _clip_history 인덱스(필터 대응)
         self._sync_cwd = False  # 터미널 경로 ↔ 파일탭 리모트 동기화 옵션
-        self._util_docks: Dict[str, UtilDock] = {}    # 열려 있는 유틸 도크
-        self._util_actions: Dict[str, QAction] = {}   # 유틸 메뉴 항목(체크 = 열림)
+        self._tool_widgets: Dict[str, QWidget] = {}   # 생성된 도구 위젯(탭에서 빼도 유지)
+        self._tool_actions: Dict[str, QAction] = {}   # 도구 메뉴 항목(체크 = 탭 있음)
         self._connecting = False              # 연결 진행 중 여부
         self._conn_worker: Optional[_ConnectWorker] = None  # 현재 연결 워커
         self._conn_workers: set = set()       # 실행 중 워커 참조(GC 방지)
@@ -216,20 +216,8 @@ class MainWindow(QMainWindow):
         act_export.triggered.connect(self._on_export_commands)
         act_import.triggered.connect(self._on_import_commands)
 
-        # 유틸: 레지스트리(ui/utils)를 그대로 메뉴로 — 체크하면 도크 생성, 해제하면 닫힘
-        self.util_menu = util_menu = self.menuBar().addMenu("유틸")
-        for spec in UTIL_SPECS:
-            act = util_menu.addAction(spec.title)
-            act.setCheckable(True)
-            if spec.tooltip:
-                act.setToolTip(spec.tooltip)
-            if spec.shortcut:
-                act.setShortcut(spec.shortcut)
-            act.toggled.connect(lambda on, s=spec: self._on_util_toggled(s, on))
-            self._util_actions[spec.key] = act
-        util_menu.addSeparator()
-        act_close_utils = util_menu.addAction("열린 유틸 모두 닫기")
-        act_close_utils.triggered.connect(self._close_all_utils)
+        # 도구 메뉴: 메뉴바 자리만 여기서 잡고, 항목은 도크를 만든 뒤 채운다(_build_tool_menu).
+        self.tool_menu = self.menuBar().addMenu("도구")
 
         # ---- 상단 상태바 (아이콘 버튼) ----
         self.conn_label = QLabel()
@@ -463,30 +451,43 @@ class MainWindow(QMainWindow):
         clip_layout.addWidget(self.clip_list, 1)
         clip_layout.addLayout(clip_btns)
 
-        # 도크 안을 탭으로 구분: 클립보드 / 파일(SFTP)
+        # 도구 도크: 탭 구성은 '도구' 메뉴 체크에 따라 추가/삭제된다.
         self.file_browser = FileBrowser(
             self._active_transport, on_sync_toggled=self._on_sync_toggled, parent=self
         )
+        self._tool_widgets[CLIPBOARD] = clip_box
+        self._tool_widgets[FILES] = self.file_browser
+
         self.dock_tabs = QTabWidget()
-        self.dock_tabs.addTab(clip_box, "클립보드")
-        self.dock_tabs.addTab(self.file_browser, "파일")
         self.dock_tabs.currentChanged.connect(self._on_dock_tab_changed)
 
-        self.clip_dock = QDockWidget("도구", self)
-        self.clip_dock.setObjectName("toolDock")
-        self.clip_dock.setWidget(self.dock_tabs)
-        self.clip_dock.setAllowedAreas(
+        # 도구를 모두 빼면 빈 화면 대신 안내 문구를 보여 준다.
+        self.tool_hint = QLabel("사용할 도구를 메뉴 [도구] 에서 선택하세요.")
+        self.tool_hint.setAlignment(Qt.AlignCenter)
+        self.tool_hint.setWordWrap(True)
+        self.tool_hint.setStyleSheet("color:#7f8c8d;")
+        dock_body = QWidget()
+        dock_body_layout = QVBoxLayout(dock_body)
+        dock_body_layout.setContentsMargins(0, 0, 0, 0)
+        dock_body_layout.addWidget(self.dock_tabs, 1)
+        dock_body_layout.addWidget(self.tool_hint, 1)
+
+        self.tool_dock = QDockWidget("도구", self)
+        self.tool_dock.setObjectName("toolDock")
+        self.tool_dock.setWidget(dock_body)
+        self.tool_dock.setAllowedAreas(
             Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.LeftDockWidgetArea
         )
-        self.clip_dock.setFeatures(
+        self.tool_dock.setFeatures(
             QDockWidget.DockWidgetMovable
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
-        self.addDockWidget(Qt.RightDockWidgetArea, self.clip_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.tool_dock)
+        self._build_tool_menu()
 
         view_menu = self.menuBar().addMenu("보기")
-        view_menu.addAction(self.clip_dock.toggleViewAction())
+        view_menu.addAction(self.tool_dock.toggleViewAction())
         view_menu.addSeparator()
         act_save_term = view_menu.addAction("활성 터미널 내용 저장...")
         act_save_term.triggered.connect(self._on_save_terminal)
@@ -575,65 +576,82 @@ class MainWindow(QMainWindow):
         self._refresh_clip_list()
         QApplication.clipboard().clear()
 
-    # ----------------------------------------------------------------- 유틸
-    def _on_util_toggled(self, spec: UtilSpec, on: bool) -> None:
-        """유틸 메뉴 체크 → 도크 생성 / 해제."""
-        dock = self._util_docks.get(spec.key)
+    # ----------------------------------------------------------------- 도구
+    def _build_tool_menu(self) -> None:
+        """레지스트리(ui/tools)를 그대로 '도구' 메뉴로 — 체크하면 탭 추가, 해제하면 삭제."""
+        for spec in TOOL_SPECS:
+            act = self.tool_menu.addAction(spec.title)
+            act.setCheckable(True)
+            if spec.tooltip:
+                act.setToolTip(spec.tooltip)
+            act.toggled.connect(lambda on, s=spec: self._on_tool_toggled(s, on))
+            self._tool_actions[spec.key] = act
+        self.tool_menu.addSeparator()
+        act_close_all = self.tool_menu.addAction("모든 도구 닫기")
+        act_close_all.triggered.connect(self._close_all_tools)
+
+        for spec in TOOL_SPECS:  # 기본으로 열어 둘 도구(클립보드/파일)
+            if spec.default_on:
+                self._tool_actions[spec.key].setChecked(True)
+        self._update_tool_hint()
+
+    def _tool_widget(self, spec: ToolSpec) -> Optional[QWidget]:
+        """도구 위젯을 얻는다(패널 도구는 처음 켤 때 생성)."""
+        widget = self._tool_widgets.get(spec.key)
+        if widget is None and spec.factory is not None:
+            widget = spec.factory(
+                on_send_to_command=self._on_tool_to_command, parent=self
+            )
+            widget.apply_font(self._term_font)
+            self._tool_widgets[spec.key] = widget
+        return widget
+
+    def _on_tool_toggled(self, spec: ToolSpec, on: bool) -> None:
+        widget = self._tool_widget(spec)
+        if widget is None:
+            return
+        index = self.dock_tabs.indexOf(widget)
         if on:
-            if dock is None:
-                self._create_util_dock(spec)
-            else:
-                dock.show()
-                dock.raise_()
-        elif dock is not None:
-            dock.hide()
-            self._release_util_dock(spec.key)
+            if index < 0:
+                self.dock_tabs.insertTab(self._tool_tab_index(spec), widget, spec.tab)
+            self.tool_dock.show()
+            self.tool_dock.raise_()
+            self.dock_tabs.setCurrentWidget(widget)
+        elif index >= 0:
+            self.dock_tabs.removeTab(index)  # 위젯은 살려 둔다(내용 유지)
+            widget.hide()
+            on_removed = getattr(widget, "on_removed", None)
+            if callable(on_removed):
+                on_removed()
+            if self.dock_tabs.count() == 0:
+                self.tool_dock.hide()
+        self._update_tool_hint()
 
-    def _create_util_dock(self, spec: UtilSpec) -> None:
-        """레지스트리 정의대로 유틸 패널을 만들어 도크로 띄운다."""
-        panel = spec.factory(on_send_to_command=self._on_util_to_command, parent=self)
-        panel.apply_font(self._term_font)
+    def _update_tool_hint(self) -> None:
+        """탭이 하나도 없으면 안내 문구로 대체."""
+        empty = self.dock_tabs.count() == 0
+        self.dock_tabs.setVisible(not empty)
+        self.tool_hint.setVisible(empty)
 
-        dock = UtilDock(spec.key, spec.title, self)
-        dock.setWidget(panel)
-        dock.setAllowedAreas(
-            Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.LeftDockWidgetArea
-        )
-        dock.setFeatures(
-            QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-            | QDockWidget.DockWidgetClosable
-        )
-        dock.closed.connect(self._release_util_dock)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
-        # 기존 도구 도크(또는 먼저 열린 유틸)와 탭으로 묶어 화면을 아낀다.
-        opened = list(self._util_docks.values())
-        self.tabifyDockWidget(opened[-1] if opened else self.clip_dock, dock)
+    def _tool_tab_index(self, spec: ToolSpec) -> int:
+        """레지스트리 순서를 유지하도록 삽입 위치를 계산."""
+        order = [s.key for s in TOOL_SPECS]
+        index = 0
+        for key in order[: order.index(spec.key)]:
+            widget = self._tool_widgets.get(key)
+            if widget is not None and self.dock_tabs.indexOf(widget) >= 0:
+                index += 1
+        return index
 
-        self._util_docks[spec.key] = dock
-        dock.show()
-        dock.raise_()
-        panel.src.setFocus()
+    def _close_all_tools(self) -> None:
+        for act in self._tool_actions.values():
+            act.setChecked(False)
 
-    def _release_util_dock(self, key: str) -> None:
-        """도크를 해제하고 메뉴 체크를 푼다(✕ 로 닫을 때도 호출됨)."""
-        dock = self._util_docks.pop(key, None)
-        if dock is not None:
-            dock.deleteLater()
-        act = self._util_actions.get(key)
-        if act is not None and act.isChecked():
-            act.setChecked(False)  # toggled(False) → 이미 정리된 상태라 무해
-
-    def _close_all_utils(self) -> None:
-        for key in list(self._util_docks):
-            self._util_docks[key].hide()
-            self._release_util_dock(key)
-
-    def _on_util_to_command(self, text: str) -> None:
-        """유틸 결과를 하단 명령 입력창으로 보낸다."""
+    def _on_tool_to_command(self, text: str) -> None:
+        """도구 결과를 하단 명령 입력창으로 보낸다."""
         self.cmd_edit.setPlainText(text)
         self.cmd_edit.setFocus()
-        self.statusBar().showMessage("유틸 결과를 명령 입력창으로 보냈습니다.", 2500)
+        self.statusBar().showMessage("도구 결과를 명령 입력창으로 보냈습니다.", 2500)
 
     # ------------------------------------------------------------- 상태 갱신
     def _current_terminal(self) -> Optional[TerminalWidget]:
@@ -1064,8 +1082,10 @@ class MainWindow(QMainWindow):
         font.setStyleHint(QFont.Monospace)
         self._term_font = font
         self.cmd_edit.setFont(font)
-        for dock in self._util_docks.values():
-            dock.widget().apply_font(font)
+        for widget in self._tool_widgets.values():
+            apply = getattr(widget, "apply_font", None)
+            if callable(apply):
+                apply(font)
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)
             if isinstance(w, TerminalWidget):

@@ -1,4 +1,4 @@
-"""유틸: 비밀번호 기반 문자열 암호화 / 복호화 (AES-256-GCM).
+"""도구: 비밀번호 기반 문자열 암호화 / 복호화 (AES-256-GCM).
 
 출력은 한 줄 텍스트라 그대로 복사해 두거나 파일에 붙여 넣을 수 있다.
 
@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-from ui.utils.base64_panel import b64_to_bytes
-from ui.utils.base_panel import TextUtilPanel
+from ui.tools.base64_panel import b64_to_bytes
+from ui.tools.base_panel import TextUtilPanel
 
 try:  # cryptography 는 paramiko 의 의존성이라 보통 함께 설치된다.
     from cryptography.exceptions import InvalidTag
@@ -144,6 +144,11 @@ class CryptoPanel(TextUtilPanel):
         act_row.addWidget(enc_btn, 1)
         act_row.addWidget(dec_btn, 1)
         return [pw_row, act_row]
+
+    def on_removed(self) -> None:
+        """탭에서 내려가면 비밀번호는 메모리에 남기지 않는다."""
+        self.password.clear()
+        self.set_status(self.START_HINT)
 
     # -------------------------------------------------------------- 동작들
     def _on_encrypt(self) -> None:

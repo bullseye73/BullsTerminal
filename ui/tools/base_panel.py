@@ -1,7 +1,7 @@
-"""유틸 패널 공통 틀.
+"""변환 도구 패널 공통 틀.
 
 위쪽 `입력` / 아래쪽 `결과` 두 칸과 공통 버튼(붙여넣기·지우기·복사·입력창으로·결과→입력),
-상태 표시줄을 제공한다. 새 유틸은 이 클래스를 상속해서
+상태 표시줄을 제공한다. 새 도구는 이 클래스를 상속해서
 
     * `INPUT_HINT` / `START_HINT` 문구를 정하고
     * `action_rows()` 에 동작 버튼 줄(들)을,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 
 class TextUtilPanel(QWidget):
-    """텍스트 입력 → 변환 → 결과 형태의 유틸 패널 기반 클래스."""
+    """텍스트 입력 → 변환 → 결과 형태의 도구 패널 기반 클래스."""
 
     INPUT_HINT = "변환할 내용을 입력/붙여넣기"
     RESULT_HINT = "결과가 여기에 표시됩니다 (편집 가능)"
@@ -51,6 +51,9 @@ class TextUtilPanel(QWidget):
     def option_widgets(self) -> List[QWidget]:
         """마지막 줄('결과 → 입력' 옆)에 붙일 옵션 위젯들."""
         return []
+
+    def on_removed(self) -> None:
+        """도크 탭에서 내려갈 때 호출(민감한 입력 정리 등). 기본은 아무것도 안 함."""
 
     # ---------------------------------------------------------------- UI 구성
     def _build_ui(self) -> None:
