@@ -43,6 +43,7 @@ from ui.command_editor import CommandEditor
 from ui.connect_dialog import ConnectDialog
 from ui.file_browser import FileBrowser
 from ui.terminal_widget import TerminalWidget
+from ui.util_panel import UtilPanel
 
 
 APP_NAME = "bullsTerminal"
@@ -445,13 +446,18 @@ class MainWindow(QMainWindow):
         clip_layout.addWidget(self.clip_list, 1)
         clip_layout.addLayout(clip_btns)
 
-        # 도크 안을 탭으로 구분: 클립보드 / 파일(SFTP)
+        # 도크 안을 탭으로 구분: 클립보드 / 파일(SFTP) / 유틸(Base64)
         self.file_browser = FileBrowser(
             self._active_transport, on_sync_toggled=self._on_sync_toggled, parent=self
         )
+        self.util_panel = UtilPanel(
+            on_send_to_command=self._on_util_to_command, parent=self
+        )
+        self.util_panel.apply_font(self._term_font)
         self.dock_tabs = QTabWidget()
         self.dock_tabs.addTab(clip_box, "클립보드")
         self.dock_tabs.addTab(self.file_browser, "파일")
+        self.dock_tabs.addTab(self.util_panel, "유틸")
         self.dock_tabs.currentChanged.connect(self._on_dock_tab_changed)
 
         self.clip_dock = QDockWidget("도구", self)
@@ -469,6 +475,8 @@ class MainWindow(QMainWindow):
 
         view_menu = self.menuBar().addMenu("보기")
         view_menu.addAction(self.clip_dock.toggleViewAction())
+        act_util = view_menu.addAction("유틸 (Base64 인코딩/디코딩)")
+        act_util.triggered.connect(self._on_show_util)
         view_menu.addSeparator()
         act_save_term = view_menu.addAction("활성 터미널 내용 저장...")
         act_save_term.triggered.connect(self._on_save_terminal)
@@ -556,6 +564,20 @@ class MainWindow(QMainWindow):
         self._clip_history.clear()
         self._refresh_clip_list()
         QApplication.clipboard().clear()
+
+    # ----------------------------------------------------------------- 유틸
+    def _on_show_util(self) -> None:
+        """도구 도크를 열고 유틸(Base64) 탭으로 전환."""
+        self.clip_dock.show()
+        self.clip_dock.raise_()
+        self.dock_tabs.setCurrentWidget(self.util_panel)
+        self.util_panel.src.setFocus()
+
+    def _on_util_to_command(self, text: str) -> None:
+        """유틸 결과를 하단 명령 입력창으로 보낸다."""
+        self.cmd_edit.setPlainText(text)
+        self.cmd_edit.setFocus()
+        self.statusBar().showMessage("유틸 결과를 명령 입력창으로 보냈습니다.", 2500)
 
     # ------------------------------------------------------------- 상태 갱신
     def _current_terminal(self) -> Optional[TerminalWidget]:
@@ -986,6 +1008,7 @@ class MainWindow(QMainWindow):
         font.setStyleHint(QFont.Monospace)
         self._term_font = font
         self.cmd_edit.setFont(font)
+        self.util_panel.apply_font(font)
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)
             if isinstance(w, TerminalWidget):
