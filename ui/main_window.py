@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtGui import QAction, QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -43,7 +43,7 @@ from ui.command_editor import CommandEditor
 from ui.connect_dialog import ConnectDialog
 from ui.file_browser import FileBrowser
 from ui.terminal_widget import TerminalWidget
-from ui.util_panel import UtilPanel
+from ui.utils import UTIL_SPECS, UtilDock, UtilSpec
 
 
 APP_NAME = "bullsTerminal"
@@ -167,6 +167,8 @@ class MainWindow(QMainWindow):
         self._clip_history: List[str] = []  # 클립보드 기록(최신순, 세션 메모리)
         self._clip_view_idx: List[int] = []  # 표시 행 → _clip_history 인덱스(필터 대응)
         self._sync_cwd = False  # 터미널 경로 ↔ 파일탭 리모트 동기화 옵션
+        self._util_docks: Dict[str, UtilDock] = {}    # 열려 있는 유틸 도크
+        self._util_actions: Dict[str, QAction] = {}   # 유틸 메뉴 항목(체크 = 열림)
         self._connecting = False              # 연결 진행 중 여부
         self._conn_worker: Optional[_ConnectWorker] = None  # 현재 연결 워커
         self._conn_workers: set = set()       # 실행 중 워커 참조(GC 방지)
@@ -213,6 +215,21 @@ class MainWindow(QMainWindow):
         act_import = cmd_menu.addAction("명령 복원 (가져오기)...")
         act_export.triggered.connect(self._on_export_commands)
         act_import.triggered.connect(self._on_import_commands)
+
+        # 유틸: 레지스트리(ui/utils)를 그대로 메뉴로 — 체크하면 도크 생성, 해제하면 닫힘
+        self.util_menu = util_menu = self.menuBar().addMenu("유틸")
+        for spec in UTIL_SPECS:
+            act = util_menu.addAction(spec.title)
+            act.setCheckable(True)
+            if spec.tooltip:
+                act.setToolTip(spec.tooltip)
+            if spec.shortcut:
+                act.setShortcut(spec.shortcut)
+            act.toggled.connect(lambda on, s=spec: self._on_util_toggled(s, on))
+            self._util_actions[spec.key] = act
+        util_menu.addSeparator()
+        act_close_utils = util_menu.addAction("열린 유틸 모두 닫기")
+        act_close_utils.triggered.connect(self._close_all_utils)
 
         # ---- 상단 상태바 (아이콘 버튼) ----
         self.conn_label = QLabel()
@@ -446,18 +463,13 @@ class MainWindow(QMainWindow):
         clip_layout.addWidget(self.clip_list, 1)
         clip_layout.addLayout(clip_btns)
 
-        # 도크 안을 탭으로 구분: 클립보드 / 파일(SFTP) / 유틸(Base64)
+        # 도크 안을 탭으로 구분: 클립보드 / 파일(SFTP)
         self.file_browser = FileBrowser(
             self._active_transport, on_sync_toggled=self._on_sync_toggled, parent=self
         )
-        self.util_panel = UtilPanel(
-            on_send_to_command=self._on_util_to_command, parent=self
-        )
-        self.util_panel.apply_font(self._term_font)
         self.dock_tabs = QTabWidget()
         self.dock_tabs.addTab(clip_box, "클립보드")
         self.dock_tabs.addTab(self.file_browser, "파일")
-        self.dock_tabs.addTab(self.util_panel, "유틸")
         self.dock_tabs.currentChanged.connect(self._on_dock_tab_changed)
 
         self.clip_dock = QDockWidget("도구", self)
@@ -475,8 +487,6 @@ class MainWindow(QMainWindow):
 
         view_menu = self.menuBar().addMenu("보기")
         view_menu.addAction(self.clip_dock.toggleViewAction())
-        act_util = view_menu.addAction("유틸 (Base64 인코딩/디코딩)")
-        act_util.triggered.connect(self._on_show_util)
         view_menu.addSeparator()
         act_save_term = view_menu.addAction("활성 터미널 내용 저장...")
         act_save_term.triggered.connect(self._on_save_terminal)
@@ -566,12 +576,58 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().clear()
 
     # ----------------------------------------------------------------- 유틸
-    def _on_show_util(self) -> None:
-        """도구 도크를 열고 유틸(Base64) 탭으로 전환."""
-        self.clip_dock.show()
-        self.clip_dock.raise_()
-        self.dock_tabs.setCurrentWidget(self.util_panel)
-        self.util_panel.src.setFocus()
+    def _on_util_toggled(self, spec: UtilSpec, on: bool) -> None:
+        """유틸 메뉴 체크 → 도크 생성 / 해제."""
+        dock = self._util_docks.get(spec.key)
+        if on:
+            if dock is None:
+                self._create_util_dock(spec)
+            else:
+                dock.show()
+                dock.raise_()
+        elif dock is not None:
+            dock.hide()
+            self._release_util_dock(spec.key)
+
+    def _create_util_dock(self, spec: UtilSpec) -> None:
+        """레지스트리 정의대로 유틸 패널을 만들어 도크로 띄운다."""
+        panel = spec.factory(on_send_to_command=self._on_util_to_command, parent=self)
+        panel.apply_font(self._term_font)
+
+        dock = UtilDock(spec.key, spec.title, self)
+        dock.setWidget(panel)
+        dock.setAllowedAreas(
+            Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.LeftDockWidgetArea
+        )
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        dock.closed.connect(self._release_util_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        # 기존 도구 도크(또는 먼저 열린 유틸)와 탭으로 묶어 화면을 아낀다.
+        opened = list(self._util_docks.values())
+        self.tabifyDockWidget(opened[-1] if opened else self.clip_dock, dock)
+
+        self._util_docks[spec.key] = dock
+        dock.show()
+        dock.raise_()
+        panel.src.setFocus()
+
+    def _release_util_dock(self, key: str) -> None:
+        """도크를 해제하고 메뉴 체크를 푼다(✕ 로 닫을 때도 호출됨)."""
+        dock = self._util_docks.pop(key, None)
+        if dock is not None:
+            dock.deleteLater()
+        act = self._util_actions.get(key)
+        if act is not None and act.isChecked():
+            act.setChecked(False)  # toggled(False) → 이미 정리된 상태라 무해
+
+    def _close_all_utils(self) -> None:
+        for key in list(self._util_docks):
+            self._util_docks[key].hide()
+            self._release_util_dock(key)
 
     def _on_util_to_command(self, text: str) -> None:
         """유틸 결과를 하단 명령 입력창으로 보낸다."""
@@ -1008,7 +1064,8 @@ class MainWindow(QMainWindow):
         font.setStyleHint(QFont.Monospace)
         self._term_font = font
         self.cmd_edit.setFont(font)
-        self.util_panel.apply_font(font)
+        for dock in self._util_docks.values():
+            dock.widget().apply_font(font)
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)
             if isinstance(w, TerminalWidget):
