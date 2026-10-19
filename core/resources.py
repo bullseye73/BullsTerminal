@@ -16,9 +16,9 @@ def resource_path(*parts: str) -> str:
 
 
 def icon_paths() -> "list[str]":
-    """존재하는 앱 아이콘 파일 경로 목록(ico 는 멀티 사이즈라 우선)."""
+    """존재하는 앱 아이콘 파일 경로 목록(ico/icns 는 멀티 사이즈라 우선)."""
     out = []
-    for name in ("bullsterminal.ico", "bullsterminal.png"):
+    for name in ("bullsterminal.ico", "bullsterminal.icns", "bullsterminal.png"):
         p = resource_path("assets", name)
         if os.path.exists(p):
             out.append(p)

@@ -815,6 +815,14 @@ class TerminalWidget(QWidget):
             delta = -self._rows if key == Qt.Key_PageUp else self._rows
             self._vbar.setValue(self._vbar.value() + delta)
             return
+        # macOS: Cmd+C (복사) / Cmd+V (붙여넣기)
+        if (mod & Qt.MetaModifier) and not (mod & (Qt.ControlModifier | Qt.AltModifier)):
+            if key == Qt.Key_C:
+                self._copy()
+                return
+            if key == Qt.Key_V:
+                self._paste()
+                return
         # Ctrl+Shift+C/V : 복사 / 붙여넣기
         if (mod & Qt.ControlModifier) and (mod & Qt.ShiftModifier):
             if key == Qt.Key_C:

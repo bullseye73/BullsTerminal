@@ -91,8 +91,10 @@ def save_favorites(favs: "list[dict]") -> None:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
     os.replace(tmp, FAVORITES_PATH)
 
-# 기본 폰트: 기존 Monospace 에서 크기만 한 단계 크게(11 -> 12)
-DEFAULT_SETTINGS = {"font_family": "Monospace", "font_size": 12}
+# 기본 폰트: macOS는 Menlo, 리눅스/윈도우는 Monospace
+import sys
+DEFAULT_FONT = "Menlo" if sys.platform == "darwin" else "Monospace"
+DEFAULT_SETTINGS = {"font_family": DEFAULT_FONT, "font_size": 12}
 
 
 def load_settings() -> dict:

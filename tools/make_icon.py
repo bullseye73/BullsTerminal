@@ -267,6 +267,38 @@ def main() -> int:
     with open(ico_path, "wb") as f:
         f.write(ico_bytes(images))
     print(f"작성: {ico_path} ({', '.join(str(s) for s in ICO_SIZES)}px)")
+
+    # macOS: iconutil 이 있으면 assets/bullsterminal.icns 생성
+    if sys.platform == "darwin":
+        import shutil
+        import subprocess
+        import tempfile
+
+        if shutil.which("iconutil"):
+            iconset_dir = tempfile.mkdtemp(suffix=".iconset")
+            try:
+                sized[512] = downsample(master, MASTER, MASTER // 512)
+                icns_sizes = [
+                    ("icon_16x16.png", sized[16], 16),
+                    ("icon_16x16@2x.png", sized[32], 32),
+                    ("icon_32x32.png", sized[32], 32),
+                    ("icon_32x32@2x.png", sized[64], 64),
+                    ("icon_128x128.png", sized[128], 128),
+                    ("icon_128x128@2x.png", sized[256], 256),
+                    ("icon_256x256.png", sized[256], 256),
+                    ("icon_256x256@2x.png", sized[512], 512),
+                    ("icon_512x512.png", sized[512], 512),
+                ]
+                for fname, raw, sz in icns_sizes:
+                    with open(os.path.join(iconset_dir, fname), "wb") as f:
+                        f.write(png_bytes(raw, sz))
+                icns_path = os.path.join(out_dir, "bullsterminal.icns")
+                subprocess.run(["iconutil", "-c", "icns", iconset_dir, "-o", icns_path], check=True)
+                print(f"작성: {icns_path}")
+            except Exception as e:
+                print(f"[경고] icns 생성 실패: {e}")
+            finally:
+                shutil.rmtree(iconset_dir, ignore_errors=True)
     return 0
 
 

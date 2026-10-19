@@ -12,10 +12,10 @@ SSH로 연결한 타겟에서 **대화형 터미널 + 기능별 명령 일괄 �
 > `~/.config/bullsTerminal/` 로 **자동 복사**되므로 명령·즐겨찾기를 그대로 사용할 수 있습니다.
 > (원본은 지우지 않습니다.)
 
-## 설치 & 실행 (우분투 데스크톱)
+## 설치 & 실행 (macOS · 우분투 데스크톱)
 
 ```bash
-cd /path/to/bullsTerminal      # 소스 위치(Samba 공유 가능)
+cd /path/to/bullsTerminal      # 소스 위치
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -166,6 +166,16 @@ rm -rf /tmp/_MEI*                            # 실패한 실행이 남긴 찌꺼
 TMPDIR=$HOME/.cache ~/bullsterminal-build/dist/bullsTerminal   # 여유 있는 위치에 해제
 ```
 근본적으로 피하려면 `--onedir` 로 빌드하세요(해제 과정 자체가 없어 시작도 빠릅니다).
+
+### macOS
+```bash
+./build-macos.sh
+# 산출물: dist/bullsTerminal.app
+open dist/bullsTerminal.app
+```
+- **응용 프로그램 설치**: `cp -R dist/bullsTerminal.app /Applications/`
+- 게이트키퍼(개발자 미확인) 경고 시: `xattr -cr dist/bullsTerminal.app`
+- macOS 특화: `Cmd+C` / `Cmd+V` (터미널 복사/붙여넣기), `Cmd+Enter` (명령 전송), `Ctrl+C` (셸 SIGINT 인터럽트 유지), 고해상도 Retina `.icns` 아이콘 적용.
 
 ### 윈도우
 ```bat

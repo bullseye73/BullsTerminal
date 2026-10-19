@@ -118,13 +118,13 @@ def looks_like_command(text: str) -> bool:
 
 
 class CommandEdit(QPlainTextEdit):
-    """여러 줄 명령 입력창. Ctrl+Enter 로 전송 요청."""
+    """여러 줄 명령 입력창. Ctrl+Enter 또는 Cmd+Enter 로 전송 요청."""
 
     send_requested = Signal()
 
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and (
-            event.modifiers() & Qt.ControlModifier
+            event.modifiers() & (Qt.ControlModifier | Qt.MetaModifier)
         ):
             self.send_requested.emit()
             return
