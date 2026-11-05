@@ -151,8 +151,14 @@ class TextUtilPanel(QWidget):
     # ------------------------------------------------------------- 공통 동작
     def apply_font(self, font: QFont) -> None:
         """입력/결과 편집기에 앱 공용 폰트 적용."""
-        self.src.setFont(font)
-        self.dst.setFont(font)
+        size = font.pointSize() if font.pointSize() > 0 else 12
+        family = font.family().replace('"', '\\"')
+        qss = f'QPlainTextEdit {{ font-family: "{family}"; font-size: {size}pt; }}'
+        for ed in (self.src, self.dst):
+            ed.setStyleSheet(qss)
+            ed.setFont(font)
+            ed.document().setDefaultFont(font)
+            ed.viewport().update()
 
     def set_status(self, text: str, error: bool = False) -> None:
         self.status.setStyleSheet("color:#f87171;" if error else "color:#a1a1aa;")

@@ -296,7 +296,8 @@ class TerminalWidget(QWidget):
             font = QFont("Monospace")
             font.setStyleHint(QFont.Monospace)
             font.setPointSize(12)
-        self.setFont(font)
+        self._font = QFont(font)
+        self.setFont(self._font)
         self._recompute_metrics()
 
         self._cols = 80
@@ -458,14 +459,15 @@ class TerminalWidget(QWidget):
 
     # -------------------------------------------------------------- 폰트/크기
     def _recompute_metrics(self) -> None:
-        fm = QFontMetricsF(self.font())
+        fm = QFontMetricsF(self._font)
         self._cw = max(1.0, fm.horizontalAdvance("M"))
         self._ch = max(1.0, fm.height())
         self._ascent = fm.ascent()
 
     def apply_font(self, font) -> None:
         """폰트/크기 변경을 반영하고 셀 크기·pty 크기를 재계산."""
-        self.setFont(font)
+        self._font = QFont(font)
+        self.setFont(self._font)
         self._recompute_metrics()
         cols = max(1, int(self._text_width() / self._cw))
         rows = max(1, int(self.height() / self._ch))
@@ -513,7 +515,7 @@ class TerminalWidget(QWidget):
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(_DEFAULT_BG))
-        p.setFont(self.font())
+        p.setFont(self._font)
 
         cw, ch = self._cw, self._ch
         sel = self._ordered_selection()

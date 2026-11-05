@@ -359,14 +359,7 @@ class MainWindow(QMainWindow):
             "명령을 클릭하면 여기 표시됩니다. 수정 후 Ctrl+Enter 또는 [입력]으로 실행 "
             "(여러 줄 입력 가능)"
         )
-        self.cmd_edit.setFont(self._term_font)
-        # 터미널과 어울리는 다크 징크 배경 + bash 구문 강조
-        self.cmd_edit.setStyleSheet(
-            "QPlainTextEdit { background:#18181b; color:#e4e4e7;"
-            " border:1px solid #242429; border-radius:8px; padding:6px 8px;"
-            " selection-background-color:rgba(59, 130, 246, 0.30); }"
-            "QPlainTextEdit:focus { border:1px solid rgba(59, 130, 246, 0.50); }"
-        )
+        self._apply_cmd_edit_font(self._term_font)
         _pal = self.cmd_edit.palette()
         _pal.setColor(QPalette.PlaceholderText, QColor("#71717a"))
         self.cmd_edit.setPalette(_pal)
@@ -1108,19 +1101,45 @@ class MainWindow(QMainWindow):
             item.setToolTip(tip)
         self.statusBar().showMessage(f"'{cmd.label}' 명령을 저장했습니다.", 2500)
 
+    def _apply_cmd_edit_font(self, font: QFont) -> None:
+        """명령 입력창에 폰트를 적용한다 (스타일시트 재폴리싱 시에도 유지되도록 CSS에 명시)."""
+        size = font.pointSize() if font.pointSize() > 0 else store.DEFAULT_SETTINGS["font_size"]
+        family = font.family().replace('"', '\\"')
+        self.cmd_edit.setStyleSheet(
+            f'QPlainTextEdit {{ background:#18181b; color:#e4e4e7;'
+            f' font-family: "{family}"; font-size: {size}pt;'
+            f' border:1px solid #242429; border-radius:8px; padding:6px 8px;'
+            f' selection-background-color:rgba(59, 130, 246, 0.30); }}'
+            f'QPlainTextEdit:focus {{ border:1px solid rgba(59, 130, 246, 0.50); }}'
+        )
+        self.cmd_edit.setFont(font)
+        self.cmd_edit.document().setDefaultFont(font)
+        if getattr(self, "_cmd_highlighter", None) is not None:
+            self._cmd_highlighter.rehighlight()
+        self.cmd_edit.viewport().update()
+
     def _on_change_font(self) -> None:
-        """터미널/입력창 폰트·크기 변경 (모든 터미널 탭에 즉시 적용, 설정 저장)."""
-        res = QFontDialog.getFont(self._term_font, self, "터미널/입력창 폰트")
-        # PySide6 버전에 따라 (font, ok) 또는 (ok, font) 순서가 다를 수 있음
-        if isinstance(res[0], bool):
-            ok, font = res
-        else:
-            font, ok = res
-        if not ok:
+        """터미널/입력창 폰트·크기 변경 (모든 터미널 탭에 즉시 적용, 설정 저장).
+
+        macOS 네이티브 NSFontPanel은 모달 확인(OK) 버튼이 없고 닫을 때 변경 사항이
+        취소(ok=False)로 처리되는 Qt/Cocoa 이슈가 있으므로 DontUseNativeDialog를 사용한다.
+        """
+        dlg = QFontDialog(self._term_font, self)
+        dlg.setWindowTitle("터미널/입력창 폰트")
+        dlg.setOption(QFontDialog.FontDialogOption.DontUseNativeDialog, True)
+        if dlg.exec() != QFontDialog.DialogCode.Accepted:
             return
+        selected = dlg.selectedFont()
+        size = selected.pointSize()
+        if size <= 0 and selected.pointSizeF() > 0:
+            size = int(round(selected.pointSizeF()))
+        if size <= 0:
+            size = store.DEFAULT_SETTINGS["font_size"]
+
+        font = QFont(selected.family(), size)
         font.setStyleHint(QFont.Monospace)
         self._term_font = font
-        self.cmd_edit.setFont(font)
+        self._apply_cmd_edit_font(font)
         for widget in self._tool_widgets.values():
             apply = getattr(widget, "apply_font", None)
             if callable(apply):
@@ -1129,8 +1148,10 @@ class MainWindow(QMainWindow):
             w = self.tabs.widget(i)
             if isinstance(w, TerminalWidget):
                 w.apply_font(font)
-        size = font.pointSize() if font.pointSize() > 0 else store.DEFAULT_SETTINGS["font_size"]
         store.save_settings({"font_family": font.family(), "font_size": size})
+        self.statusBar().showMessage(
+            f"글꼴이 '{font.family()} ({size}pt)'(으)로 변경되었습니다.", 3000
+        )
 
     def _run_in_terminal(self, commands: List[Command]) -> None:
         parts = [c.command.strip() for c in commands if c.command.strip()]
