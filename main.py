@@ -11,6 +11,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from core.resources import icon_paths
+from core.version import APP_VERSION
 from ui.main_window import APP_NAME, MainWindow
 
 
@@ -39,6 +40,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
     app.setApplicationDisplayName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     app.setDesktopFileName("bullsTerminal")  # 리눅스: .desktop 매칭(작업표시줄 아이콘)

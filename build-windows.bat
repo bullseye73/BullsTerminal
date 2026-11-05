@@ -45,6 +45,9 @@ if errorlevel 1 (
 )
 
 echo [3/4] 실행파일 빌드...
+for /f "delims=" %%v in ('python core\version.py') do set APP_VERSION=%%v
+python core\version.py --set "%APP_VERSION%" >nul
+echo       빌드 버전: v%APP_VERSION%
 pyinstaller --clean -y --onefile --windowed --name bullsTerminal --icon "%~dp0assets\bullsterminal.ico" --add-data "%~dp0assets;assets" --hidden-import pyte main.py
 if errorlevel 1 (
     echo 빌드 실패

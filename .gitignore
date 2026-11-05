@@ -11,6 +11,8 @@ venv/
 env/
 build/
 dist/
+release/
+pkg-stage/
 *.spec
 
 # OS

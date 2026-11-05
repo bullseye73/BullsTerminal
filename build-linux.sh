@@ -44,6 +44,10 @@ for m in QtQml QtQuick QtQuick3D QtQuickWidgets QtQuickControls2 QtQuickTest \
 done
 
 # --add-data 의 원본 경로는 --specpath(= $BUILD) 기준으로 해석되므로 절대경로로 준다.
+APP_VERSION=$(python "$ROOT/core/version.py")
+python "$ROOT/core/version.py" --set "$APP_VERSION" >/dev/null
+echo "빌드 버전: v$APP_VERSION"
+
 pyinstaller --clean -y \
     "--$MODE" --windowed \
     --name bullsTerminal \

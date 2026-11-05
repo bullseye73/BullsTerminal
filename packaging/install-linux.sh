@@ -11,7 +11,13 @@ set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-SRC="${1:-$HOME/bullsterminal-build/dist/bullsTerminal}"
+if [ -n "${1:-}" ]; then
+    SRC="$1"
+elif [ -e "$ROOT/bullsTerminal" ]; then
+    SRC="$ROOT/bullsTerminal"
+else
+    SRC="$HOME/bullsterminal-build/dist/bullsTerminal"
+fi
 if [ ! -e "$SRC" ]; then
     echo "[오류] 빌드 산출물을 찾을 수 없습니다: $SRC"
     echo "       먼저 ./build-linux.sh 로 빌드하거나 경로를 인자로 넘기세요."

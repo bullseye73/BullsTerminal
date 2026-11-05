@@ -1,0 +1,175 @@
+name: Release BullsTerminal
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Sync app version from Git tag
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            TAG_VERSION="$(python core/version.py)"
+          fi
+          echo "Syncing core/version.py to Git tag version: $TAG_VERSION"
+          python core/version.py --set "$TAG_VERSION"
+          echo "APP_VERSION=$TAG_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Generate platform icons
+        shell: bash
+        run: python tools/make_icon.py
+
+      - name: Build and Package Binary
+        shell: bash
+        run: |
+          mkdir -p release
+
+          EXCLUDES=()
+          for m in QtQml QtQuick QtQuick3D QtQuickWidgets QtQuickControls2 QtQuickTest \
+                   QtWebEngineCore QtWebEngineWidgets QtWebEngineQuick QtWebChannel QtWebSockets \
+                   Qt3DCore Qt3DRender Qt3DAnimation Qt3DInput Qt3DLogic Qt3DExtras \
+                   QtCharts QtDataVisualization QtGraphs QtMultimedia QtMultimediaWidgets \
+                   QtSpatialAudio QtTextToSpeech QtBluetooth QtNfc QtPositioning QtLocation \
+                   QtSensors QtSerialPort QtSerialBus QtRemoteObjects QtScxml QtStateMachine \
+                   QtDesigner QtUiTools QtHelp QtTest QtSql QtPdf QtPdfWidgets; do
+            EXCLUDES+=(--exclude-module "PySide6.$m")
+          done
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            pyinstaller --clean -y \
+              --onefile --windowed \
+              --name bullsTerminal \
+              --icon "assets/bullsterminal.ico" \
+              --add-data "assets;assets" \
+              --hidden-import pyte \
+              "${EXCLUDES[@]}" \
+              main.py
+            cp dist/bullsTerminal.exe "release/bullsTerminal-v${APP_VERSION}-win-x64.exe"
+
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            ARCH=$(uname -m)
+            pyinstaller --clean -y \
+              --windowed \
+              --name bullsTerminal \
+              --icon "assets/bullsterminal.icns" \
+              --osx-bundle-identifier "com.bullseye.bullsterminal" \
+              --hidden-import pyte \
+              --add-data "assets:assets" \
+              "${EXCLUDES[@]}" \
+              main.py
+
+            PLIST="dist/bullsTerminal.app/Contents/Info.plist"
+            if [ -f "$PLIST" ] && [ -x /usr/libexec/PlistBuddy ]; then
+              /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${APP_VERSION}" "$PLIST" 2>/dev/null || \
+                /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${APP_VERSION}" "$PLIST" 2>/dev/null || true
+              /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${APP_VERSION}" "$PLIST" 2>/dev/null || \
+                /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${APP_VERSION}" "$PLIST" 2>/dev/null || true
+            fi
+
+            codesign --force --deep -s - dist/bullsTerminal.app 2>/dev/null || true
+
+            ditto -c -k --sequesterRsrc --keepParent \
+              dist/bullsTerminal.app \
+              "release/bullsTerminal-v${APP_VERSION}-macos-${ARCH}.zip"
+
+            hdiutil create \
+              -volname "bullsTerminal v${APP_VERSION}" \
+              -srcfolder dist/bullsTerminal.app \
+              -ov -format UDZO \
+              "release/bullsTerminal-v${APP_VERSION}-macos-${ARCH}.dmg"
+
+          else
+            pyinstaller --clean -y \
+              --onefile --windowed \
+              --name bullsTerminal \
+              --hidden-import pyte \
+              --add-data "assets:assets" \
+              "${EXCLUDES[@]}" \
+              main.py
+
+            chmod +x dist/bullsTerminal
+            cp dist/bullsTerminal "release/bullsTerminal-v${APP_VERSION}-linux-x64"
+
+            STAGE="pkg-stage/bullsTerminal-v${APP_VERSION}-linux-x64"
+            mkdir -p "$STAGE/packaging" "$STAGE/assets"
+            cp dist/bullsTerminal "$STAGE/bullsTerminal"
+            chmod +x "$STAGE/bullsTerminal"
+            cp packaging/install-linux.sh "$STAGE/packaging/"
+            chmod +x "$STAGE/packaging/install-linux.sh"
+            cp packaging/bullsTerminal.desktop "$STAGE/packaging/"
+            cp assets/bullsterminal.svg assets/bullsterminal.png "$STAGE/assets/"
+            tar -czf "release/bullsTerminal-v${APP_VERSION}-linux-x64.tar.gz" \
+              -C pkg-stage "bullsTerminal-v${APP_VERSION}-linux-x64"
+          fi
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.tar.gz
+            release/bullsTerminal-*-linux-*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-binaries
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: bullsTerminal ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist-binaries/*.exe
+            dist-binaries/*.dmg
+            dist-binaries/*.zip
+            dist-binaries/*.tar.gz
+            dist-binaries/bullsTerminal-*-linux-*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

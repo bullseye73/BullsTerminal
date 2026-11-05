@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from core import store
 from core.models import Command, Group
+from core.version import APP_VERSION
 from ssh.client import ConnectionInfo, SSHClient
 from ui.bash_highlighter import BashHighlighter
 from ui.command_editor import CommandEditor
@@ -179,7 +180,7 @@ class MainWindow(QMainWindow):
         self._term_font = QFont(s["font_family"], s["font_size"])
         self._term_font.setStyleHint(QFont.Monospace)
 
-        self.setWindowTitle(f"{APP_NAME} — SSH 터미널 · 일괄 명령 실행")
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} — SSH 터미널 · 일괄 명령 실행")
         self.resize(1180, 760)
 
         self._build_ui()

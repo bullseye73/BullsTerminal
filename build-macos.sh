@@ -54,6 +54,9 @@ for m in QtQml QtQuick QtQuick3D QtQuickWidgets QtQuickControls2 QtQuickTest \
 done
 
 echo "[3/4] bullsTerminal.app 번들 패키징 (PyInstaller)..."
+APP_VERSION=$(python core/version.py)
+python core/version.py --set "$APP_VERSION" >/dev/null
+echo "      빌드 버전: v$APP_VERSION"
 rm -rf build dist
 
 pyinstaller --clean -y \
@@ -68,8 +71,15 @@ pyinstaller --clean -y \
     --workpath "$ROOT/build" \
     main.py
 
-# 4. Ad-hoc 로컬 서명 적용
+# 4. Info.plist 버전 기록 및 Ad-hoc 로컬 서명 적용
 if [ -d "$ROOT/dist/bullsTerminal.app" ]; then
+    PLIST="$ROOT/dist/bullsTerminal.app/Contents/Info.plist"
+    if [ -f "$PLIST" ] && [ -x /usr/libexec/PlistBuddy ]; then
+        /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$PLIST" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$PLIST" 2>/dev/null || true
+        /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$PLIST" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $APP_VERSION" "$PLIST" 2>/dev/null || true
+    fi
     echo "[4/4] 로컬 실행 코드 서명 적용..."
     codesign --force --deep -s - "$ROOT/dist/bullsTerminal.app" 2>/dev/null || true
 fi
