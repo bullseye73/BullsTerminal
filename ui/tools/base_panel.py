@@ -62,21 +62,27 @@ class TextUtilPanel(QWidget):
         self.src.setTabChangesFocus(True)
 
         src_paste = QPushButton("붙여넣기")
+        src_paste.setProperty("variant", "subtle")
         src_paste.setToolTip("시스템 클립보드 내용을 입력에 넣기")
         src_paste.clicked.connect(self._on_paste)
         src_clear = QPushButton("지우기")
+        src_clear.setProperty("variant", "subtle")
         src_clear.setToolTip("입력과 결과를 모두 비우기")
         src_clear.clicked.connect(self._on_clear)
 
+        src_label = QLabel("입력")
+        src_label.setObjectName("sectionTitle")
         src_head = QHBoxLayout()
-        src_head.addWidget(QLabel("입력"))
+        src_head.setSpacing(4)
+        src_head.addWidget(src_label)
         src_head.addStretch(1)
         src_head.addWidget(src_paste)
         src_head.addWidget(src_clear)
 
         src_box = QWidget()
         src_layout = QVBoxLayout(src_box)
-        src_layout.setContentsMargins(0, 0, 0, 0)
+        src_layout.setContentsMargins(0, 0, 0, 4)
+        src_layout.setSpacing(6)
         src_layout.addLayout(src_head)
         src_layout.addWidget(self.src, 1)
 
@@ -85,22 +91,28 @@ class TextUtilPanel(QWidget):
         self.dst.setTabChangesFocus(True)
 
         dst_copy = QPushButton("복사")
+        dst_copy.setProperty("variant", "subtle")
         dst_copy.setToolTip("결과를 클립보드로 복사")
         dst_copy.clicked.connect(self._on_copy)
         self.dst_send = QPushButton("입력창으로")
+        self.dst_send.setProperty("variant", "primary")
         self.dst_send.setToolTip("결과를 아래 명령 입력창으로 보내기")
         self.dst_send.clicked.connect(self._on_send)
         self.dst_send.setEnabled(self._on_send_to_command is not None)
 
+        dst_label = QLabel("결과")
+        dst_label.setObjectName("sectionTitle")
         dst_head = QHBoxLayout()
-        dst_head.addWidget(QLabel("결과"))
+        dst_head.setSpacing(4)
+        dst_head.addWidget(dst_label)
         dst_head.addStretch(1)
         dst_head.addWidget(dst_copy)
         dst_head.addWidget(self.dst_send)
 
         dst_box = QWidget()
         dst_layout = QVBoxLayout(dst_box)
-        dst_layout.setContentsMargins(0, 0, 0, 0)
+        dst_layout.setContentsMargins(0, 4, 0, 0)
+        dst_layout.setSpacing(6)
         dst_layout.addLayout(dst_head)
         dst_layout.addWidget(self.dst, 1)
 
@@ -110,25 +122,26 @@ class TextUtilPanel(QWidget):
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 1)
         split.setSizes([200, 200])
-        split.setHandleWidth(8)
-        split.setStyleSheet(
-            "QSplitter::handle { background: #c0c0c0; margin: 2px 0; border-radius: 2px; }"
-        )
+        split.setHandleWidth(5)
 
         swap_btn = QPushButton("결과 → 입력")
+        swap_btn.setProperty("variant", "subtle")
         swap_btn.setToolTip("결과를 입력으로 올려 연속 변환 (변환 후 바로 되돌려 확인 등)")
         swap_btn.clicked.connect(self._on_swap)
         last_row = QHBoxLayout()
+        last_row.setSpacing(6)
         last_row.addWidget(swap_btn)
         for w in self.option_widgets():
             last_row.addWidget(w)
         last_row.addStretch(1)
 
         self.status = QLabel(self.START_HINT)
+        self.status.setObjectName("subtleHint")
         self.status.setWordWrap(True)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         layout.addWidget(split, 1)
         for row in self.action_rows():
             layout.addLayout(row)
@@ -142,7 +155,7 @@ class TextUtilPanel(QWidget):
         self.dst.setFont(font)
 
     def set_status(self, text: str, error: bool = False) -> None:
-        self.status.setStyleSheet("color:#c0392b;" if error else "")
+        self.status.setStyleSheet("color:#f87171;" if error else "color:#a1a1aa;")
         self.status.setText(text)
 
     def source_text(self) -> str:

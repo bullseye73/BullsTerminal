@@ -130,9 +130,11 @@ class CryptoPanel(TextUtilPanel):
         pw_row.addWidget(show)
 
         enc_btn = QPushButton("🔒 암호화")
+        enc_btn.setProperty("variant", "primary")
         enc_btn.setToolTip("입력 문자열 → AES-256-GCM 암호문 (bT1:...)")
         enc_btn.clicked.connect(self._on_encrypt)
         dec_btn = QPushButton("🔓 복호화")
+        dec_btn.setProperty("variant", "primary")
         dec_btn.setToolTip("bT1:... 암호문 → 원래 문자열")
         dec_btn.clicked.connect(self._on_decrypt)
         if not CRYPTO_AVAILABLE:
@@ -141,6 +143,7 @@ class CryptoPanel(TextUtilPanel):
                 b.setToolTip("cryptography 패키지가 설치되어 있지 않습니다.")
 
         act_row = QHBoxLayout()
+        act_row.setSpacing(6)
         act_row.addWidget(enc_btn, 1)
         act_row.addWidget(dec_btn, 1)
         return [pw_row, act_row]

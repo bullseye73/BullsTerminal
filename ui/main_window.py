@@ -220,33 +220,33 @@ class MainWindow(QMainWindow):
         # 도구 메뉴: 메뉴바 자리만 여기서 잡고, 항목은 도크를 만든 뒤 채운다(_build_tool_menu).
         self.tool_menu = self.menuBar().addMenu("도구")
 
-        # ---- 상단 상태바 (아이콘 버튼) ----
+        # ---- 상단 상태바 (통합 헤더 + 액션 버튼) ----
         self.conn_label = QLabel()
 
-        def _icon_btn(icon, tip, slot):
-            b = QPushButton()
-            b.setIcon(icon)
+        def _header_btn(label: str, tip: str, slot):
+            b = QPushButton(label)
             b.setToolTip(tip)
-            b.setFlat(True)
-            b.setFixedWidth(34)
+            b.setProperty("variant", "subtle")
             b.clicked.connect(slot)
             return b
 
-        self.font_btn = _icon_btn(icon_font, "글꼴·크기 변경", self._on_change_font)
-        self.reconnect_btn = _icon_btn(icon_reload, "재연결 (활성 탭)", self._on_reconnect)
-        self.disconnect_btn = _icon_btn(icon_close, "연결끊기 (활성 탭)", self._on_disconnect)
+        self.font_btn = _header_btn("글꼴 설정", "글꼴·크기 변경", self._on_change_font)
+        self.reconnect_btn = _header_btn("↻ 재연결", "재연결 (활성 탭)", self._on_reconnect)
+        self.disconnect_btn = _header_btn("✕ 연결끊기", "연결끊기 (활성 탭)", self._on_disconnect)
 
-        top_bar = QHBoxLayout()
-        top_bar.addWidget(self.conn_label, 1)
+        top_bar_widget = QWidget()
+        top_bar_widget.setObjectName("topHeaderBar")
+        top_bar = QHBoxLayout(top_bar_widget)
+        top_bar.setContentsMargins(12, 6, 12, 6)
+        top_bar.setSpacing(6)
+        top_bar.addWidget(self.conn_label)
+        top_bar.addStretch(1)
         top_bar.addWidget(self.font_btn)
         top_bar.addWidget(self.reconnect_btn)
         top_bar.addWidget(self.disconnect_btn)
 
         # ---- 좌측: 명령 패널 (그룹 + 명령 + 실행 버튼) ----
-        list_style = "QListWidget::item { padding: 5px 4px; }"
-
         self.group_list = QListWidget()
-        self.group_list.setStyleSheet(list_style)
         self.group_list.currentRowChanged.connect(self._on_group_changed)
         g_add = QPushButton("＋")
         g_ren = QPushButton("이름")
@@ -255,25 +255,29 @@ class MainWindow(QMainWindow):
         g_ren.setToolTip("그룹 이름변경")
         g_del.setToolTip("그룹 삭제")
         for b in (g_add, g_ren, g_del):
-            b.setMaximumWidth(56)
+            b.setProperty("variant", "subtle")
+            b.setMaximumWidth(52)
         g_add.clicked.connect(self._on_group_add)
         g_ren.clicked.connect(self._on_group_rename)
         g_del.clicked.connect(self._on_group_delete)
 
+        group_title = QLabel("기능 그룹")
+        group_title.setObjectName("sectionTitle")
         group_header = QHBoxLayout()
-        group_header.addWidget(QLabel("기능 그룹"))
+        group_header.setSpacing(4)
+        group_header.addWidget(group_title)
         group_header.addStretch(1)
         for b in (g_add, g_ren, g_del):
             group_header.addWidget(b)
 
         group_box = QWidget()
         group_layout = QVBoxLayout(group_box)
-        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setContentsMargins(0, 0, 0, 4)
+        group_layout.setSpacing(6)
         group_layout.addLayout(group_header)
         group_layout.addWidget(self.group_list, 1)
 
         self.command_list = QListWidget()
-        self.command_list.setStyleSheet(list_style)
         self.command_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.command_list.itemDoubleClicked.connect(self._on_command_run_one)
         self.command_list.itemChanged.connect(self._on_item_changed)
@@ -289,13 +293,16 @@ class MainWindow(QMainWindow):
         c_del = QPushButton("삭제")
         c_add.setToolTip("명령 추가")
         for b in (c_add, c_edit, c_del):
-            b.setMaximumWidth(56)
+            b.setProperty("variant", "subtle")
+            b.setMaximumWidth(52)
         c_add.clicked.connect(self._on_command_add)
         c_edit.clicked.connect(self._on_command_edit)
         c_del.clicked.connect(self._on_command_delete)
 
         self.run_selected_btn = QPushButton("▶ 선택")
         self.run_group_btn = QPushButton("▶▶ 그룹")
+        self.run_selected_btn.setProperty("variant", "primary")
+        self.run_group_btn.setProperty("variant", "solid-primary")
         self.run_selected_btn.setToolTip("체크한 명령들을 순차 실행")
         self.run_group_btn.setToolTip("그룹의 모든 명령을 순차 실행")
         self.run_selected_btn.clicked.connect(self._on_run_selected)
@@ -303,19 +310,24 @@ class MainWindow(QMainWindow):
 
         # 명령 목록 헤더: 전체선택 체크 + CRUD 버튼
         header_row = QHBoxLayout()
+        header_row.setSpacing(4)
         header_row.addWidget(self.select_all_check)
         header_row.addStretch(1)
         for b in (c_add, c_edit, c_del):
             header_row.addWidget(b)
 
         run_btns = QHBoxLayout()
+        run_btns.setSpacing(6)
         run_btns.addWidget(self.run_selected_btn)
         run_btns.addWidget(self.run_group_btn)
 
+        cmd_section_title = QLabel("명령")
+        cmd_section_title.setObjectName("sectionTitle")
         command_box = QWidget()
         command_layout = QVBoxLayout(command_box)
-        command_layout.setContentsMargins(0, 0, 0, 0)
-        command_layout.addWidget(QLabel("명령"))
+        command_layout.setContentsMargins(0, 4, 0, 0)
+        command_layout.setSpacing(6)
+        command_layout.addWidget(cmd_section_title)
         command_layout.addLayout(header_row)
         command_layout.addWidget(self.command_list, 1)
         command_layout.addLayout(run_btns)
@@ -325,11 +337,8 @@ class MainWindow(QMainWindow):
         left_split.addWidget(command_box)
         left_split.setStretchFactor(0, 1)
         left_split.setStretchFactor(1, 2)
-        left_split.setHandleWidth(8)
+        left_split.setHandleWidth(5)
         left_split.setChildrenCollapsible(False)
-        left_split.setStyleSheet(
-            "QSplitter::handle { background: #c0c0c0; margin: 2px 0; border-radius: 2px; }"
-        )
 
         # ---- 우측: 터미널 탭 ----
         self.tabs = QTabWidget()
@@ -338,11 +347,11 @@ class MainWindow(QMainWindow):
         self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self.tabs.currentChanged.connect(lambda _i: self._on_terminal_tab_changed())
 
-        new_term_btn = QPushButton(" 터미널")
-        new_term_btn.setIcon(icon_new)
+        new_term_btn = QPushButton("＋ 터미널")
+        new_term_btn.setProperty("variant", "primary")
         new_term_btn.setToolTip("새 터미널 (다른 호스트로도 연결 가능)")
         new_term_btn.clicked.connect(self._on_new_terminal)
-        self.tabs.setCornerWidget(new_term_btn)
+        self.tabs.setCornerWidget(new_term_btn, Qt.TopRightCorner)
 
         # 터미널 하단 명령 입력 패널 (여러 줄 편집 + 높이 가변)
         self.cmd_edit = CommandEdit()
@@ -351,32 +360,40 @@ class MainWindow(QMainWindow):
             "(여러 줄 입력 가능)"
         )
         self.cmd_edit.setFont(self._term_font)
-        # 터미널과 어울리는 다크 배경 + bash 구문 강조
+        # 터미널과 어울리는 다크 징크 배경 + bash 구문 강조
         self.cmd_edit.setStyleSheet(
-            "QPlainTextEdit { background:#1e1e1e; color:#d3d7cf;"
-            " selection-background-color:#44475a; }"
+            "QPlainTextEdit { background:#18181b; color:#e4e4e7;"
+            " border:1px solid #242429; border-radius:8px; padding:6px 8px;"
+            " selection-background-color:rgba(59, 130, 246, 0.30); }"
+            "QPlainTextEdit:focus { border:1px solid rgba(59, 130, 246, 0.50); }"
         )
         _pal = self.cmd_edit.palette()
-        _pal.setColor(QPalette.PlaceholderText, QColor("#7f8c8d"))
+        _pal.setColor(QPalette.PlaceholderText, QColor("#71717a"))
         self.cmd_edit.setPalette(_pal)
         self._cmd_highlighter = BashHighlighter(self.cmd_edit.document())
         save_btn = QPushButton("저장")
+        save_btn.setProperty("variant", "subtle")
         save_btn.setToolTip("수정한 내용을 선택된 명령에 저장")
         save_btn.clicked.connect(self._on_save_cmd)
         send_btn = QPushButton("입력")
+        send_btn.setProperty("variant", "solid-primary")
         send_btn.setToolTip("현재 터미널로 전송 (Ctrl+Enter)")
         send_btn.clicked.connect(self._on_send_cmd)
         self.cmd_edit.send_requested.connect(self._on_send_cmd)
 
+        cmd_input_title = QLabel("명령 입력 (Ctrl+Enter 전송)")
+        cmd_input_title.setObjectName("sectionTitle")
         cmd_header = QHBoxLayout()
-        cmd_header.addWidget(QLabel("명령 입력 (Ctrl+Enter 전송)"))
+        cmd_header.setSpacing(6)
+        cmd_header.addWidget(cmd_input_title)
         cmd_header.addStretch(1)
         cmd_header.addWidget(save_btn)
         cmd_header.addWidget(send_btn)
 
         cmd_panel = QWidget()
         cmd_layout = QVBoxLayout(cmd_panel)
-        cmd_layout.setContentsMargins(0, 0, 0, 0)
+        cmd_layout.setContentsMargins(0, 4, 0, 0)
+        cmd_layout.setSpacing(6)
         cmd_layout.addLayout(cmd_header)
         cmd_layout.addWidget(self.cmd_edit, 1)
 
@@ -387,45 +404,53 @@ class MainWindow(QMainWindow):
         right_split.setStretchFactor(0, 1)
         right_split.setStretchFactor(1, 0)
         right_split.setSizes([620, 120])
-        right_split.setHandleWidth(8)
-        right_split.setStyleSheet(
-            "QSplitter::handle { background: #c0c0c0; margin: 2px 0; border-radius: 2px; }"
-        )
+        right_split.setHandleWidth(5)
+
+        right_wrap = QWidget()
+        right_wrap.setObjectName("centerContainer")
+        right_wrap_layout = QVBoxLayout(right_wrap)
+        right_wrap_layout.setContentsMargins(8, 8, 8, 8)
+        right_wrap_layout.addWidget(right_split)
 
         central_split = QSplitter(Qt.Horizontal)
         left_wrap = QWidget()
+        left_wrap.setObjectName("sidebarContainer")
         left_wrap_layout = QVBoxLayout(left_wrap)
-        left_wrap_layout.setContentsMargins(0, 0, 0, 0)
+        left_wrap_layout.setContentsMargins(10, 8, 8, 8)
         left_wrap_layout.addWidget(left_split)
-        left_wrap.setMinimumWidth(180)
-        left_wrap.setMaximumWidth(320)
+        left_wrap.setMinimumWidth(190)
+        left_wrap.setMaximumWidth(340)
         central_split.addWidget(left_wrap)
-        central_split.addWidget(right_split)
+        central_split.addWidget(right_wrap)
         central_split.setStretchFactor(0, 0)
         central_split.setStretchFactor(1, 1)
         central_split.setSizes([240, 940])
-        central_split.setHandleWidth(6)
+        central_split.setHandleWidth(5)
 
         central = QWidget()
         central_layout = QVBoxLayout(central)
-        central_layout.addLayout(top_bar)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(top_bar_widget)
         central_layout.addWidget(central_split, 1)
         self.setCentralWidget(central)
 
         # ---- 클립보드 기록 도킹 패널 (우측/하단 도킹 + 분리 가능) ----
         self.clip_list = QListWidget()
-        self.clip_list.setStyleSheet("QListWidget::item { padding: 4px 4px; }")
         self.clip_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.clip_list.itemSelectionChanged.connect(self._on_clip_selection_changed)
         self.clip_list.itemDoubleClicked.connect(self._on_clip_run)
 
         clip_del = QPushButton("삭제")
         clip_clear = QPushButton("전체 삭제")
+        clip_del.setProperty("variant", "subtle")
+        clip_clear.setProperty("variant", "subtle")
         clip_del.setToolTip("선택 항목 삭제")
         clip_clear.setToolTip("기록 및 시스템 클립보드 비우기")
         clip_del.clicked.connect(self._on_clip_delete)
         clip_clear.clicked.connect(self._on_clip_clear)
         clip_btns = QHBoxLayout()
+        clip_btns.setSpacing(6)
         clip_btns.addWidget(clip_del)
         clip_btns.addWidget(clip_clear)
         clip_btns.addStretch(1)
@@ -439,15 +464,20 @@ class MainWindow(QMainWindow):
         )
         self.clip_filter.textChanged.connect(self._refresh_clip_list)
         self.clip_count = QLabel("0")
+        self.clip_count.setObjectName("badgeCount")
         self.clip_count.setToolTip("표시/전체 개수")
         filter_row = QHBoxLayout()
+        filter_row.setSpacing(6)
         filter_row.addWidget(self.clip_filter, 1)
         filter_row.addWidget(self.clip_count)
 
+        clip_hint_label = QLabel("클릭 → 입력창 / 더블클릭 → 실행")
+        clip_hint_label.setObjectName("sectionTitle")
         clip_box = QWidget()
         clip_layout = QVBoxLayout(clip_box)
-        clip_layout.setContentsMargins(4, 4, 4, 4)
-        clip_layout.addWidget(QLabel("클릭 → 입력창 / 더블클릭 → 실행"))
+        clip_layout.setContentsMargins(8, 8, 8, 8)
+        clip_layout.setSpacing(6)
+        clip_layout.addWidget(clip_hint_label)
         clip_layout.addLayout(filter_row)
         clip_layout.addWidget(self.clip_list, 1)
         clip_layout.addLayout(clip_btns)
@@ -466,10 +496,10 @@ class MainWindow(QMainWindow):
         self.tool_hint = QLabel("사용할 도구를 메뉴 [도구] 에서 선택하세요.")
         self.tool_hint.setAlignment(Qt.AlignCenter)
         self.tool_hint.setWordWrap(True)
-        self.tool_hint.setStyleSheet("color:#7f8c8d;")
+        self.tool_hint.setObjectName("subtleHint")
         dock_body = QWidget()
         dock_body_layout = QVBoxLayout(dock_body)
-        dock_body_layout.setContentsMargins(0, 0, 0, 0)
+        dock_body_layout.setContentsMargins(6, 6, 6, 6)
         dock_body_layout.addWidget(self.dock_tabs, 1)
         dock_body_layout.addWidget(self.tool_hint, 1)
 
@@ -719,10 +749,18 @@ class MainWindow(QMainWindow):
         if term is not None and term.is_alive() and term.client and term.client.info:
             info = term.client.info
             self.conn_label.setText(f"● 연결됨: {info.username}@{info.host}:{info.port}")
-            self.conn_label.setStyleSheet("color: #22c55e; font-weight: bold;")
+            self.conn_label.setStyleSheet(
+                "background-color: rgba(34, 197, 94, 0.12); color: #4ade80;"
+                " border: 1px solid rgba(34, 197, 94, 0.28); border-radius: 6px;"
+                " padding: 3px 10px; font-weight: 600; font-size: 12px;"
+            )
         else:
             self.conn_label.setText("● 연결된 터미널 없음")
-            self.conn_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+            self.conn_label.setStyleSheet(
+                "background-color: rgba(239, 68, 68, 0.12); color: #f87171;"
+                " border: 1px solid rgba(239, 68, 68, 0.28); border-radius: 6px;"
+                " padding: 3px 10px; font-weight: 600; font-size: 12px;"
+            )
 
     def _current_group(self) -> Optional[Group]:
         row = self.group_list.currentRow()

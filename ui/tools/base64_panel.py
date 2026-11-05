@@ -67,13 +67,16 @@ class Base64Panel(TextUtilPanel):
 
     def action_rows(self) -> List[QHBoxLayout]:
         enc_btn = QPushButton("▼ 인코딩")
+        enc_btn.setProperty("variant", "primary")
         enc_btn.setToolTip("입력 문자열 → Base64 (UTF-8 기준)")
         enc_btn.clicked.connect(self._on_encode)
         dec_btn = QPushButton("▲ 디코딩")
+        dec_btn.setProperty("variant", "primary")
         dec_btn.setToolTip("입력 Base64 → 문자열 (공백/줄바꿈·패딩 누락 허용)")
         dec_btn.clicked.connect(self._on_decode)
 
         row = QHBoxLayout()
+        row.setSpacing(6)
         row.addWidget(enc_btn, 1)
         row.addWidget(dec_btn, 1)
         return [row]

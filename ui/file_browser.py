@@ -145,16 +145,20 @@ class FileBrowser(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         # ── 리모트(상단) 박스 ──
         self.remote_path_edit = QLineEdit()
         self.remote_path_edit.returnPressed.connect(self._on_remote_path_entered)
         r_up = QPushButton("상위")
         r_ref = QPushButton("새로고침")
+        for b in (r_up, r_ref):
+            b.setProperty("variant", "subtle")
         r_up.clicked.connect(self._remote_up)
         r_ref.clicked.connect(self.refresh_remote)
         r_bar = QHBoxLayout()
+        r_bar.setSpacing(4)
         r_bar.addWidget(self.remote_path_edit, 1)
         r_bar.addWidget(r_up)
         r_bar.addWidget(r_ref)
@@ -168,22 +172,28 @@ class FileBrowser(QWidget):
             "현재 터미널의 경로(cd)에 맞춰 리모트 목록을 자동 이동\n(OSC7 사용, bash 셸)"
         )
         self.sync_check.toggled.connect(self._sync_toggled)
+        r_title = QLabel("리모트 (SSH) — 활성 터미널")
+        r_title.setObjectName("sectionTitle")
         r_head = QHBoxLayout()
-        r_head.addWidget(QLabel("리모트 (SSH) — 활성 터미널"))
+        r_head.addWidget(r_title)
         r_head.addStretch(1)
         r_head.addWidget(self.sync_check)
 
         remote_box = QWidget()
         rv = QVBoxLayout(remote_box)
-        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setContentsMargins(0, 0, 0, 4)
+        rv.setSpacing(6)
         rv.addLayout(r_head)
         rv.addLayout(r_bar)
         rv.addWidget(self.remote_tree, 1)
 
         # ── 로컬(하단) 박스 (전송 버튼을 상단에 두어 경계 바로 아래 배치) ──
         act = QHBoxLayout()
+        act.setSpacing(6)
         btn_down = QPushButton("▼ 다운로드")
         btn_up = QPushButton("▲ 업로드")
+        btn_down.setProperty("variant", "primary")
+        btn_up.setProperty("variant", "primary")
         btn_down.clicked.connect(self._download)
         btn_up.clicked.connect(self._upload)
         act.addWidget(btn_down)
@@ -194,10 +204,13 @@ class FileBrowser(QWidget):
         l_up = QPushButton("상위")
         l_browse = QPushButton("폴더 선택")
         l_ref = QPushButton("새로고침")
+        for b in (l_up, l_browse, l_ref):
+            b.setProperty("variant", "subtle")
         l_up.clicked.connect(self._local_up)
         l_browse.clicked.connect(self._browse_local)
         l_ref.clicked.connect(self.refresh_local)
         l_bar = QHBoxLayout()
+        l_bar.setSpacing(4)
         l_bar.addWidget(self.local_path_edit, 1)
         l_bar.addWidget(l_up)
         l_bar.addWidget(l_browse)
@@ -207,11 +220,14 @@ class FileBrowser(QWidget):
         self.local_tree.itemDoubleClicked.connect(self._on_local_double)
         self.local_tree.customContextMenuRequested.connect(self._local_menu)
 
+        l_title = QLabel("로컬 PC")
+        l_title.setObjectName("sectionTitle")
         local_box = QWidget()
         lv = QVBoxLayout(local_box)
-        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setContentsMargins(0, 4, 0, 0)
+        lv.setSpacing(6)
         lv.addLayout(act)
-        lv.addWidget(QLabel("로컬 PC"))
+        lv.addWidget(l_title)
         lv.addLayout(l_bar)
         lv.addWidget(self.local_tree, 1)
 
@@ -221,11 +237,8 @@ class FileBrowser(QWidget):
         split.addWidget(local_box)
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 1)
-        split.setHandleWidth(8)
+        split.setHandleWidth(5)
         split.setChildrenCollapsible(False)
-        split.setStyleSheet(
-            "QSplitter::handle { background: #c0c0c0; margin: 2px 4px; border-radius: 2px; }"
-        )
         layout.addWidget(split, 1)
 
     # --------------------------------------------------------- 아이콘/항목

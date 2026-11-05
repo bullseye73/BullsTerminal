@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from core.resources import icon_paths
 from core.version import APP_VERSION
 from ui.main_window import APP_NAME, MainWindow
+from ui.theme import apply_bullsnote_theme
 
 
 def app_icon() -> QIcon:
@@ -39,6 +40,7 @@ def main() -> int:
     _set_windows_app_id()
 
     app = QApplication(sys.argv)
+    apply_bullsnote_theme(app)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setApplicationDisplayName(APP_NAME)

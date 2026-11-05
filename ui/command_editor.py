@@ -41,7 +41,9 @@ class CommandEditor(QDialog):
         form.addRow("설명", self.desc_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("확인")
+        ok_btn = buttons.button(QDialogButtonBox.Ok)
+        ok_btn.setText("확인")
+        ok_btn.setProperty("variant", "solid-primary")
         buttons.button(QDialogButtonBox.Cancel).setText("취소")
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)

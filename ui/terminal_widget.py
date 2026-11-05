@@ -39,9 +39,9 @@ _BRIGHT = {
     "black": "#555753", "red": "#ef2929", "green": "#8ae234", "brown": "#fce94f",
     "blue": "#729fcf", "magenta": "#ad7fa8", "cyan": "#34e2e2", "white": "#eeeeec",
 }
-_DEFAULT_FG = "#d3d7cf"
-_DEFAULT_BG = "#1e1e1e"
-_SEL_BG = "#44475a"
+_DEFAULT_FG = "#e4e4e7"
+_DEFAULT_BG = "#141417"
+_SEL_BG = "#2b426b"
 _HISTORY_LINES = 5000
 # pyte 는 private 모드를 (mode << 5) 로 저장. DECCKM(애플리케이션 커서 키)=모드 1.
 _DECCKM = 1 << 5
