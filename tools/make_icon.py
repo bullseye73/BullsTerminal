@@ -239,6 +239,13 @@ def ico_bytes(images: "list[tuple[int, bytes]]") -> bytes:
 
 # ------------------------------------------------------------------- 엔트리
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_dir = os.path.join(root, "assets")
     os.makedirs(out_dir, exist_ok=True)
