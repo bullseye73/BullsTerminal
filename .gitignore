@@ -27,3 +27,4 @@ Thumbs.db
 
 # 앱 런타임 설정(사용자별, ~/.config/bullsTerminal) — 저장소에 포함하지 않음
 commands.yaml
+core/version.py

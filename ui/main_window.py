@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
+import threading
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -36,9 +38,9 @@ from PySide6.QtWidgets import (
 )
 
 from core import store
-from core.models import Command, Group
+from core.models import build_command_line, Command, Group
 from core.version import APP_VERSION
-from ssh.client import ConnectionInfo, SSHClient
+from ssh.client import ConnectCancelled, ConnectionInfo, HostKeyRejected, SSHClient
 from ui.bash_highlighter import BashHighlighter
 from ui.command_editor import CommandEditor
 from ui.connect_dialog import ConnectDialog
@@ -137,22 +139,58 @@ class _ConnectWorker(QThread):
 
     ok = Signal(object, object)  # (SSHClient, channel)
     fail = Signal(str)
+    # 처음 보는/바뀐 호스트키 확인 요청: (host, port, key_type, fingerprint, status)
+    host_key_prompt = Signal(str, int, str, str, str)
 
     def __init__(self, info: ConnectionInfo) -> None:
         super().__init__()
         self._info = info
+        self._client = SSHClient()
+        self._cancelled = False
+        self._answer = False
+        self._answered = threading.Event()
+
+    # ---- GUI 스레드에서 호출 ----
+    def answer_host_key(self, trusted: bool) -> None:
+        self._answer = trusted
+        self._answered.set()
+
+    def cancel(self) -> None:
+        """연결 시도를 즉시 중단(소켓을 닫아 워커 스레드를 깨운다)."""
+        self._cancelled = True
+        self._answered.set()
+        self._client.cancel()
+
+    # ---- 워커 스레드 ----
+    def _verify_host_key(self, host, port, key_type, fp, status) -> bool:
+        if self._cancelled:
+            return False
+        self._answered.clear()
+        self._answer = False
+        self.host_key_prompt.emit(host, port, key_type, fp, status)
+        self._answered.wait()
+        return self._answer and not self._cancelled
 
     def run(self) -> None:
-        client = SSHClient()
+        client = self._client
         try:
-            client.connect(self._info)
+            client.connect(self._info, verify=self._verify_host_key)
             channel = client.open_shell()
         except Exception as exc:
             try:
                 client.close()
             except Exception:
                 pass
-            self.fail.emit(f"{type(exc).__name__}: {exc}")
+            if isinstance(exc, (HostKeyRejected, ConnectCancelled)):
+                self.fail.emit(str(exc))
+            else:
+                self.fail.emit(f"{type(exc).__name__}: {exc}")
+            return
+        if self._cancelled:  # 연결 직후 취소됨 → 결과 폐기
+            try:
+                client.close()
+            except Exception:
+                pass
             return
         self.ok.emit(client, channel)
 
@@ -735,6 +773,11 @@ class MainWindow(QMainWindow):
                 w = self.tabs.widget(i)
                 if isinstance(w, TerminalWidget) and w.is_alive():
                     w.enable_cwd_reporting()
+        else:
+            for i in range(self.tabs.count()):
+                w = self.tabs.widget(i)
+                if isinstance(w, TerminalWidget):
+                    w.cancel_cwd_reporting()  # 프롬프트 대기 중이던 설정 요청 취소
             self._sync_file_browser_to_terminal(force_refresh=False)
 
     def _update_connection_label(self) -> None:
@@ -1154,8 +1197,8 @@ class MainWindow(QMainWindow):
         )
 
     def _run_in_terminal(self, commands: List[Command]) -> None:
-        parts = [c.command.strip() for c in commands if c.command.strip()]
-        if not parts:
+        line = build_command_line(commands)
+        if not line:
             return
 
         need_confirm = [c for c in commands if c.confirm]
@@ -1175,22 +1218,28 @@ class MainWindow(QMainWindow):
 
         # 하나의 입력 라인으로 순차 실행(;). 단일 라인이라 sudo 프롬프트가
         # 뒤 명령을 비밀번호로 삼키지 않고 터미널에서 직접 입력받는다.
-        payload = "; ".join(parts) + "\r"
+        # '실패 시 중단'이 켜진 명령 뒤는 && 로 묶인다(build_command_line).
+        payload = line + "\r"
         term.send_text(payload)
         term.setFocus()
 
     # ------------------------------------------------------- 터미널 탭 관리
-    def _add_terminal(self, info: ConnectionInfo) -> None:
-        """백그라운드 스레드로 연결 → UI 프리징 없이 진행. 완료 시 콜백에서 탭 생성."""
+    def _add_terminal(self, info: ConnectionInfo, remember: bool = True) -> None:
+        """백그라운드 스레드로 연결 → UI 프리징 없이 진행. 완료 시 콜백에서 탭 생성.
+
+        remember=False 면 연결 직후 비밀번호를 메모리에서 지운다(재연결/새 탭 시 다시 입력).
+        """
         if self._connecting:
             QMessageBox.information(self, "안내", "이미 연결을 시도 중입니다.")
             return
         self._connecting = True
 
         worker = _ConnectWorker(info)
+        worker.remember = remember
         self._conn_worker = worker
         self._conn_workers.add(worker)
         worker.ok.connect(self._on_connect_ok)
+        worker.host_key_prompt.connect(self._on_host_key_prompt)
         worker.fail.connect(self._on_connect_fail)
         worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
         worker.start()
@@ -1206,6 +1255,43 @@ class MainWindow(QMainWindow):
         dlg.canceled.connect(self._on_connect_cancel)
         self._conn_dialog = dlg
         dlg.show()
+
+    def _on_host_key_prompt(
+        self, host: str, port: int, key_type: str, fp: str, status: str
+    ) -> None:
+        """처음 보는/바뀐 서버 호스트키를 사용자에게 확인받는다(비밀번호 전송 전)."""
+        worker = self.sender()
+        if not isinstance(worker, _ConnectWorker):
+            return
+        if worker is not self._conn_worker:
+            worker.answer_host_key(False)  # 취소/지난 요청
+            return
+        target = f"{host}:{port}"
+        box = QMessageBox(self)
+        if status == "changed":
+            box.setIcon(QMessageBox.Critical)
+            box.setWindowTitle("경고: 서버 호스트키가 변경됨")
+            box.setText(
+                f"{target} 의 호스트키가 이전에 저장된 키와 다릅니다.\n\n"
+                "누군가 연결을 가로채고 있을 수 있습니다(중간자 공격).\n"
+                "서버를 재설치했거나 키를 교체한 것이 확실할 때만 계속하세요."
+            )
+            yes_text = "키 교체 후 연결"
+        else:
+            box.setIcon(QMessageBox.Question)
+            box.setWindowTitle("처음 접속하는 서버")
+            box.setText(
+                f"{target} 은(는) 처음 접속하는 서버입니다.\n"
+                "아래 지문이 서버의 실제 호스트키와 일치하는지 확인하세요."
+            )
+            yes_text = "신뢰하고 연결"
+        box.setInformativeText(f"{key_type}\n{fp}")
+        yes_btn = box.addButton(yes_text, QMessageBox.AcceptRole)
+        no_btn = box.addButton("취소", QMessageBox.RejectRole)
+        box.setDefaultButton(no_btn)
+        box.setEscapeButton(no_btn)
+        box.exec()
+        worker.answer_host_key(box.clickedButton() is yes_btn)
 
     def _cleanup_worker(self, worker: "_ConnectWorker") -> None:
         self._conn_workers.discard(worker)
@@ -1233,6 +1319,10 @@ class MainWindow(QMainWindow):
         self._connecting = False
         self._conn_worker = None
 
+        worker = self.sender()
+        if not getattr(worker, "remember", True) and client.info is not None:
+            # '비밀번호 기억' 해제: 인증이 끝났으므로 메모리에 남기지 않는다
+            client.info = replace(client.info, password="")
         info = client.info
         term = TerminalWidget(channel, client=client, font=self._term_font)
         term.session_closed.connect(self._on_terminal_session_closed)
@@ -1243,6 +1333,10 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(index)
         term.setFocus()
         self._last_info = info
+        if getattr(client, "legacy_used", False):
+            self.statusBar().showMessage(
+                "주의: 이 서버는 구형(레거시) 암호 알고리즘으로 연결되었습니다.", 8000
+            )
         if self._sync_cwd:  # 동기화 켜져 있으면 새 터미널에도 OSC7 리포팅 주입
             term.enable_cwd_reporting()
         self._update_connection_label()
@@ -1256,7 +1350,9 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "연결 실패", msg)
 
     def _on_connect_cancel(self) -> None:
-        # 워커는 소켓 타임아웃 후 종료되며 결과는 폐기됨(sender != _conn_worker)
+        # 소켓을 닫아 워커를 즉시 종료시킨다. 늦게 온 결과는 폐기(sender != _conn_worker)
+        if self._conn_worker is not None:
+            self._conn_worker.cancel()
         self._conn_worker = None
         self._connecting = False
         self._close_conn_dialog()
@@ -1270,9 +1366,14 @@ class MainWindow(QMainWindow):
         return None
 
     def _on_new_terminal(self) -> None:
-        dialog = ConnectDialog(self, prefill=self._last_info)
+        self._connect_via_dialog(self._last_info)
+
+    def _connect_via_dialog(self, prefill: Optional[ConnectionInfo]) -> None:
+        dialog = ConnectDialog(self, prefill=prefill)
         if dialog.exec() == ConnectDialog.Accepted:
-            self._add_terminal(dialog.connection_info())
+            self._add_terminal(
+                dialog.connection_info(), remember=dialog.remember_password()
+            )
 
     def _rebuild_fav_menu(self) -> None:
         """즐겨찾기 서브메뉴를 최신 목록으로 다시 구성."""
@@ -1302,9 +1403,7 @@ class MainWindow(QMainWindow):
         if info.password:
             self._add_terminal(info)  # 저장된 비밀번호 → 바로 연결
         else:
-            dialog = ConnectDialog(self, prefill=info)
-            if dialog.exec() == ConnectDialog.Accepted:
-                self._add_terminal(dialog.connection_info())
+            self._connect_via_dialog(info)
 
     def open_initial_terminal(self) -> None:
         """시작 시 첫 연결 다이얼로그를 띄운다."""
@@ -1346,7 +1445,10 @@ class MainWindow(QMainWindow):
             term.shutdown()
             self.tabs.removeTab(index)
             term.deleteLater()
-            self._add_terminal(info)
+            if info.password:
+                self._add_terminal(info)
+            else:
+                self._connect_via_dialog(info)  # 비밀번호를 기억하지 않음 → 다시 입력
         else:
             self._on_new_terminal()
 
@@ -1362,7 +1464,14 @@ class MainWindow(QMainWindow):
         self._update_connection_label()
 
     def closeEvent(self, event) -> None:
-        # 진행 중 연결 결과는 무시(late 시그널 폐기)
+        # 진행 중 연결은 취소하고 워커 종료를 잠깐 기다린다(실행 중 스레드 파괴 방지)
         self._conn_worker = None
+        for worker in list(self._conn_workers):
+            worker.cancel()
+        for worker in list(self._conn_workers):
+            worker.wait(2000)
         self._close_all_terminals()
+        fb = getattr(self, "file_browser", None)
+        if fb is not None:
+            fb.shutdown()
         super().closeEvent(event)

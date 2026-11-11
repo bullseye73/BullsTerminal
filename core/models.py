@@ -69,3 +69,23 @@ class Group:
 
     def to_dict(self) -> dict:
         return {"name": self.name, "commands": [c.to_dict() for c in self.commands]}
+
+
+def build_command_line(commands: "List[Command]") -> str:
+    """여러 명령을 한 입력 줄로 잇는다.
+
+    기본은 `a; b` (앞 명령 실패와 무관하게 계속). stop_on_error 가 켜진 명령은
+    `{ a; } && { 나머지; }` 로 묶어, 실패하면 그 뒤 명령이 **모두** 실행되지 않게 한다.
+    """
+    line = ""
+    for cmd in reversed([c for c in commands if c.command.strip()]):
+        text = cmd.command.strip().rstrip(";").rstrip()
+        if not text:
+            continue
+        if not line:
+            line = text
+        elif cmd.stop_on_error:
+            line = "{ " + text + "; } && { " + line + "; }"
+        else:
+            line = text + "; " + line
+    return line

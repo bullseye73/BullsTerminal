@@ -12,6 +12,7 @@ import codecs
 import copy
 import itertools
 import re
+import queue
 import socket
 import threading
 import time
@@ -210,6 +211,66 @@ class _Reader(QThread):
         self._run = False
 
 
+class _Writer(threading.Thread):
+    """키 입력/붙여넣기/명령을 채널로 보내는 전용 스레드.
+
+    channel.send() 는 SSH 윈도우가 차면 일부만 보내거나 대기한다. GUI 스레드에서
+    직접 부르면 (1) 반환값을 무시해 큰 붙여넣기가 잘리고 (2) 서버가 읽지 않을 때
+    UI 가 멈춘다. 큐에 넣고 여기서 남김없이 순서대로 보낸다.
+    """
+
+    def __init__(self, channel) -> None:
+        super().__init__(daemon=True, name="bt-term-writer")
+        self._channel = channel
+        self._queue: "queue.Queue" = queue.Queue()
+        self._run = True
+
+    def write(self, data: bytes) -> None:
+        if data and self._run:
+            self._queue.put(data)
+
+    def stop(self) -> None:
+        self._run = False
+        self._queue.put(None)
+
+    def run(self) -> None:
+        while self._run:
+            data = self._queue.get()
+            if data is None:
+                break
+            view = bytes(data)
+            while view and self._run:
+                try:
+                    sent = self._channel.send(view[:32768])
+                except socket.timeout:
+                    continue  # 윈도우가 열릴 때까지 재시도(리더가 채널 타임아웃을 짧게 둠)
+                except Exception:
+                    return  # 채널 종료
+                if sent <= 0:
+                    return
+                view = view[sent:]
+
+
+# pyte 는 private 모드를 (mode << 5) 로 저장. 2004 = 브래킷 붙여넣기.
+_BRACKETED_PASTE = 2004 << 5
+_PASTE_START = "\x1b[200~"
+_PASTE_END = "\x1b[201~"
+# 붙여넣기에서 제거할 제어문자(탭/개행 제외). ESC 를 지우면 숨은 이스케이프 시퀀스도 무력화된다.
+_PASTE_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# 셸 프롬프트로 보이는 줄 끝($ # %). psql 의 'db=#' 같은 REPL 프롬프트는 제외.
+_PROMPT_END = re.compile(r"(?<![=>])[$#%]$")
+
+
+def sanitize_paste(text: str) -> str:
+    """붙여넣을 텍스트 정리: 줄바꿈 통일, 제어문자(ESC 포함) 제거."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _PASTE_CTRL.sub("", text)
+
+
+# 종료 대기 시간 안에 끝나지 않은 리더 스레드 보관(실행 중 QThread 파괴 → 크래시 방지)
+_ORPHAN_READERS: set = set()
+
+
 class TerminalScreen(pyte.HistoryScreen):
     """pyte HistoryScreen + 대체 화면(alternate screen) 지원.
 
@@ -286,6 +347,8 @@ class TerminalWidget(QWidget):
         self.remote_cwd: Optional[str] = None   # OSC7 로 감지된 현재 원격 경로
         self._osc_pending = b""                  # OSC7 경계 분할 버퍼(리더 스레드)
         self._cwd_reporting = False              # OSC7 리포팅 주입 여부
+        self._cwd_pending = False                # 프롬프트 대기 중인 주입 요청
+        self._last_output = time.monotonic()     # 마지막 출력 수신 시각(리더 스레드가 갱신)
 
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
@@ -326,6 +389,8 @@ class TerminalWidget(QWidget):
         self._flush_timer.timeout.connect(self._tick)
         self._flush_timer.start(33)  # ~30fps 리페인트 구동
 
+        self._writer = _Writer(channel)
+        self._writer.start()
         self._reader = _Reader(channel, self._feed)
         self._reader.closed.connect(self._on_closed)
         self._reader.start()
@@ -334,6 +399,7 @@ class TerminalWidget(QWidget):
     def _feed(self, chunk: bytes) -> None:
         """리더 스레드에서 호출: pyte 파싱(락 보호). 작은 조각으로 나눠 락 점유를
         짧게 유지 → GUI 페인트가 조각 사이에 끼어들 수 있음."""
+        self._last_output = time.monotonic()
         self._scan_osc7(chunk)  # 현재 경로(OSC7) 추적 (락 불필요, 화면과 무관)
         for i in range(0, len(chunk), 4096):
             with self._lock:
@@ -388,6 +454,12 @@ class TerminalWidget(QWidget):
         """
         if self._cwd_reporting or not self._alive:
             return
+        # 설정 명령은 '키 입력'으로 들어가므로, 셸 프롬프트가 아닐 때(vim, sudo 비밀번호
+        # 입력, mysql 등) 보내면 그 프로그램에 타이핑된다. 프롬프트가 보일 때까지 미룬다.
+        if not self._at_shell_prompt():
+            self._cwd_pending = True
+            return
+        self._cwd_pending = False
         self._cwd_reporting = True
         # 한 번만 즉시 방출 + 프롬프트마다 방출 설정 (bash/ash 분기)
         emit = r'printf "\033]7;file://%s%s\a" "${HOSTNAME}" "$PWD"'
@@ -407,10 +479,36 @@ class TerminalWidget(QWidget):
         )
         self.send_text(cmd)
 
+    def cancel_cwd_reporting(self) -> None:
+        """아직 보내지 않은(프롬프트 대기 중인) 경로 리포팅 설정 요청을 취소."""
+        self._cwd_pending = False
+
+    def _at_shell_prompt(self) -> bool:
+        """화면 상태로 '빈 셸 프롬프트에서 대기 중'인지 추정(보수적)."""
+        if time.monotonic() - self._last_output < 0.3:
+            return False  # 출력이 아직 흐르는 중
+        try:
+            with self._lock:
+                if self.screen.in_alt:
+                    return False  # vim/less/htop 등 전체화면 프로그램
+                cur = self.screen.cursor
+                row = self.screen.buffer[cur.y]
+                line = "".join(
+                    (row[x].data or " ") for x in range(self.screen.columns)
+                )
+        except Exception:
+            return False
+        if line[cur.x:].strip():
+            return False  # 커서 뒤에 글자가 있음(편집 중)
+        head = line[:cur.x].rstrip()
+        # 프롬프트 기호로 끝나야 함 = 사용자가 아직 아무것도 입력하지 않은 상태
+        return bool(head) and bool(_PROMPT_END.search(head))
+
     def _on_closed(self) -> None:
         if not self._alive:
             return
         self._alive = False
+        self._writer.stop()
         with self._lock:
             try:
                 self.stream.feed(
@@ -424,6 +522,8 @@ class TerminalWidget(QWidget):
 
     def _tick(self) -> None:
         """GUI 타이머: 변경 시 스크롤바 갱신 + 리페인트 예약."""
+        if self._cwd_pending and self._alive:
+            self.enable_cwd_reporting()  # 프롬프트가 보이면 그때 설정
         if self._dirty:
             self._dirty = False
             with self._lock:
@@ -764,13 +864,51 @@ class TerminalWidget(QWidget):
         text = cb.text(QClipboard.Selection) if cb.supportsSelection() else cb.text()
         self._send_paste(text)
 
+    def _bracketed_paste(self) -> bool:
+        """실행 중인 프로그램(bash/zsh/vim 등)이 브래킷 붙여넣기를 켰는지."""
+        try:
+            with self._lock:
+                return _BRACKETED_PASTE in self.screen.mode
+        except Exception:
+            return False
+
     def _send_paste(self, text: str) -> None:
-        if self._alive and text:
-            self._scroll_to_bottom()
-            try:
-                self.channel.send(text.encode("utf-8"))
-            except Exception:
-                pass
+        if not self._alive or not text:
+            return
+        text = sanitize_paste(text)
+        if not text:
+            return
+        if self._bracketed_paste():
+            # 셸이 '붙여넣은 텍스트'로 인식 → 줄바꿈이 있어도 Enter 전까지 실행하지 않는다
+            payload = _PASTE_START + text.replace("\n", "\r") + _PASTE_END
+        else:
+            # 브래킷 모드가 없는 셸(구형 ash 등)은 줄바꿈마다 즉시 실행하므로 먼저 확인
+            if "\n" in text and not self._confirm_multiline_paste(text):
+                return
+            payload = text.replace("\n", "\r")
+        self._scroll_to_bottom()
+        self._writer.write(payload.encode("utf-8"))
+
+    def _confirm_multiline_paste(self, text: str) -> bool:
+        lines = text.split("\n")
+        preview = "\n".join(ln[:120] for ln in lines[:12])
+        if len(lines) > 12:
+            preview += f"\n… (총 {len(lines)}줄)"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("여러 줄 붙여넣기")
+        box.setText(
+            f"줄바꿈이 포함된 {len(lines)}줄을 붙여넣습니다.\n"
+            "이 셸에서는 줄마다 바로 실행될 수 있습니다. 계속할까요?"
+        )
+        box.setDetailedText(text[:20000])
+        box.setInformativeText(preview)
+        yes = box.addButton("붙여넣기", QMessageBox.AcceptRole)
+        no = box.addButton("취소", QMessageBox.RejectRole)
+        box.setDefaultButton(no)
+        box.setEscapeButton(no)
+        box.exec()
+        return box.clickedButton() is yes
 
     # -------------------------------------------------------------- 입력
     # 방향/편집 키 (수정자 포함 시 xterm CSI 인코딩)
@@ -802,10 +940,7 @@ class TerminalWidget(QWidget):
         if not self._alive or not text:
             return
         self._scroll_to_bottom()
-        try:
-            self.channel.send(text.encode("utf-8"))
-        except Exception:
-            pass
+        self._writer.write(text.encode("utf-8"))
 
     def keyPressEvent(self, event) -> None:
         if not self._alive:
@@ -844,20 +979,14 @@ class TerminalWidget(QWidget):
         data = self._map_key(event)
         if data:
             self._scroll_to_bottom()  # 입력 시 바닥으로
-            try:
-                self.channel.send(data)
-            except Exception:
-                pass
+            self._writer.write(data)
 
     def inputMethodEvent(self, event) -> None:
         """IME 조합 확정 문자열(예: 한글)을 셸로 전송."""
         text = event.commitString()
         if self._alive and text:
             self._scroll_to_bottom()
-            try:
-                self.channel.send(text.encode("utf-8"))
-            except Exception:
-                pass
+            self._writer.write(text.encode("utf-8"))
         event.accept()
 
     @staticmethod
@@ -968,14 +1097,21 @@ class TerminalWidget(QWidget):
         self._alive = False
         self._log_path = None
         self._flush_timer.stop()
+        self._writer.stop()
         self._reader.stop()       # run() 종료 시 세션 로그도 닫힘
-        self._reader.wait(1000)
+        # 채널을 먼저 닫아 recv 를 즉시 깨운다 → 아래 wait 가 거의 바로 끝난다
         try:
             self.channel.close()
         except Exception:
             pass
-        if self.client is not None:
-            try:
-                self.client.close()
-            except Exception:
-                pass
+        client = self.client  # 참조는 유지(재연결 시 접속 정보 사용)
+        if client is not None:
+            # transport 종료는 내부 스레드 join 을 포함하므로 UI 스레드 밖에서 수행
+            threading.Thread(
+                target=client.close, daemon=True, name="bt-ssh-close"
+            ).start()
+        reader = self._reader
+        if not reader.wait(500):
+            # 대량 출력 파싱 중이면 조금 더 걸릴 수 있다. 끝날 때까지 참조만 유지.
+            _ORPHAN_READERS.add(reader)
+            reader.finished.connect(lambda r=reader: _ORPHAN_READERS.discard(r))

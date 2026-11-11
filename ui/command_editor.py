@@ -28,12 +28,15 @@ class CommandEditor(QDialog):
         self.command_edit.setMinimumHeight(80)
         self.desc_edit = QLineEdit()
         self.confirm_check = QCheckBox("실행 전 확인창 표시 (위험 명령)")
+        self.stop_check = QCheckBox("실패하면 뒤의 명령 실행 중단 (그룹 일괄 실행 시)")
+        self._sudo = command.sudo if command is not None else False  # 편집 UI 없음 → 값 보존
 
         if command is not None:
             self.label_edit.setText(command.label)
             self.command_edit.setPlainText(command.command)
             self.desc_edit.setText(command.description)
             self.confirm_check.setChecked(command.confirm)
+            self.stop_check.setChecked(command.stop_on_error)
 
         form = QFormLayout()
         form.addRow("이름", self.label_edit)
@@ -51,6 +54,7 @@ class CommandEditor(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(self.confirm_check)
+        layout.addWidget(self.stop_check)
         layout.addWidget(buttons)
 
     def _on_accept(self) -> None:
@@ -67,5 +71,7 @@ class CommandEditor(QDialog):
             label=self.label_edit.text().strip(),
             command=self.command_edit.toPlainText().strip(),
             description=self.desc_edit.text().strip(),
+            stop_on_error=self.stop_check.isChecked(),
             confirm=self.confirm_check.isChecked(),
+            sudo=self._sudo,
         )

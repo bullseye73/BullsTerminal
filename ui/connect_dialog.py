@@ -58,6 +58,10 @@ class ConnectDialog(QDialog):
         self.pass_edit.setEchoMode(QLineEdit.Password)
         self.remember_check = QCheckBox("이 세션 동안 비밀번호 기억")
         self.remember_check.setChecked(True)
+        self.remember_check.setToolTip(
+            "해제하면 연결 직후 비밀번호를 메모리에서 지웁니다.\n"
+            "재연결하거나 새 탭을 열 때 다시 입력해야 합니다."
+        )
 
         if prefill is not None:
             self.host_edit.setText(prefill.host)

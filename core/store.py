@@ -16,6 +16,39 @@ SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.yaml")
 FAVORITES_PATH = os.path.join(CONFIG_DIR, "favorites.yaml")
 
 
+def ensure_private_dir() -> None:
+    """설정 폴더를 소유자 전용(0700)으로 만든다. 접속 정보가 들어가므로 타 계정 열람 차단."""
+    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(CONFIG_DIR, 0o700)
+    except OSError:
+        pass  # Windows 등 POSIX 권한이 없는 환경
+
+
+def open_private(path: str):
+    """소유자만 읽고 쓸 수 있는(0600) 텍스트 파일을 새로 써서 연다."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.chmod(path, 0o600)  # 이미 있던 파일은 생성 모드가 적용되지 않으므로 명시
+    except OSError:
+        pass
+    return os.fdopen(fd, "w", encoding="utf-8")
+
+
+def _harden_existing() -> None:
+    """이전 버전이 0644/0755 로 만든 설정 폴더·파일의 권한을 좁힌다."""
+    if not os.path.isdir(CONFIG_DIR):
+        return
+    try:
+        os.chmod(CONFIG_DIR, 0o700)
+        for name in os.listdir(CONFIG_DIR):
+            full = os.path.join(CONFIG_DIR, name)
+            if os.path.isfile(full) and not os.path.islink(full):
+                os.chmod(full, 0o600)
+    except OSError:
+        pass
+
+
 def _migrate_legacy_config() -> None:
     """이전 이름(rsCommand)으로 저장된 설정을 새 폴더로 1회 복사.
 
@@ -24,7 +57,7 @@ def _migrate_legacy_config() -> None:
     if os.path.isdir(CONFIG_DIR) or not os.path.isdir(LEGACY_CONFIG_DIR):
         return
     try:
-        os.makedirs(CONFIG_DIR, exist_ok=True)
+        ensure_private_dir()
         for name in os.listdir(LEGACY_CONFIG_DIR):
             if not name.endswith((".yaml", ".yml")):
                 continue
@@ -36,6 +69,7 @@ def _migrate_legacy_config() -> None:
 
 
 _migrate_legacy_config()
+_harden_existing()
 
 
 def load_favorites() -> "list[dict]":
@@ -75,7 +109,7 @@ def _safe_port(value) -> int:
 
 
 def save_favorites(favs: "list[dict]") -> None:
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    ensure_private_dir()
     data = {"favorites": [
         {
             "name": str(f.get("name", "")),
@@ -87,7 +121,7 @@ def save_favorites(favs: "list[dict]") -> None:
         for f in favs
     ]}
     tmp = FAVORITES_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    with open_private(tmp) as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
     os.replace(tmp, FAVORITES_PATH)
 
@@ -113,13 +147,13 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict) -> None:
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    ensure_private_dir()
     data = {
         "font_family": str(settings.get("font_family", DEFAULT_SETTINGS["font_family"])),
         "font_size": int(settings.get("font_size", DEFAULT_SETTINGS["font_size"])),
     }
     tmp = SETTINGS_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    with open_private(tmp) as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
     os.replace(tmp, SETTINGS_PATH)
 
@@ -182,10 +216,10 @@ def load_groups() -> List[Group]:
 
 
 def save_groups(groups: List[Group]) -> None:
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    ensure_private_dir()
     data = {"groups": [g.to_dict() for g in groups]}
     tmp = COMMANDS_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    with open_private(tmp) as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
     os.replace(tmp, COMMANDS_PATH)
 

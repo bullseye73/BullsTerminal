@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 
-DEFAULT_VERSION = "1.0.0"
+DEFAULT_VERSION = "1.0.3"
 
 
 def normalize_version(raw: str) -> str:
@@ -30,27 +30,15 @@ def _git_tag_version() -> str | None:
         return None
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        # 1) 현재 HEAD에 정확히 매칭되는 태그 우선 확인
-        out = subprocess.check_output(
-            ["git", "describe", "--tags", "--exact-match"],
-            cwd=root,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=1.5,
-        ).strip()
-        if out:
-            return normalize_version(out)
-    except Exception:
-        pass
-
-    try:
-        # 2) 가장 최근 태그 확인 (v*.*.*)
+        # HEAD 에서 도달 가능한 가장 가까운 v*.*.* 태그(HEAD 에 태그가 있으면 그 태그).
+        # 앱 시작(임포트) 시 UI 스레드에서 실행되므로 호출 1회·짧은 타임아웃으로 제한.
         out = subprocess.check_output(
             ["git", "describe", "--tags", "--abbrev=0", "--match", "v*.*.*"],
             cwd=root,
+            stdin=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             text=True,
-            timeout=1.5,
+            timeout=1.0,
         ).strip()
         if out:
             return normalize_version(out)
