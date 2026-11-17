@@ -40,7 +40,7 @@ python main.py
 - **메뉴 / 아이콘 버튼**:
   - 메뉴바 `연결`(새 터미널·재연결·연결끊기), `설정`(글꼴·크기 변경), `명령 관리`(백업·복원)
   - 상단 우측 아이콘 버튼: 글꼴 / 재연결 / 연결끊기 (메뉴와 동일 기능, 빠른 접근)
-- **폰트 변경**: `설정 → 글꼴·크기 변경`(또는 상단 글꼴 아이콘)으로 터미널·명령 입력창의 **폰트/크기**를 바꿉니다(모든 터미널 탭 즉시 적용, `~/.config/bullsTerminal/settings.yaml`에 저장). 기본 Monospace 12pt.
+- **폰트 변경**: `설정 → 글꼴·크기 변경`(또는 상단 글꼴 아이콘)으로 터미널·명령 입력창·도구 패널의 **폰트/크기**를 바꿉니다(모든 터미널 탭 즉시 적용, `~/.config/bullsTerminal/settings.yaml`에 저장). 기본 Monospace 12pt. 다크 징크 테마(`ui/theme.py`)가 전역 적용되며, 타이틀바에 현재 앱 버전(`core/version.py`)이 표시됩니다.
 - **탭별 다른 IP 연결**: 각 터미널 탭은 **자신의 SSH 연결**을 가집니다. `+ 터미널`을 누르면 연결 다이얼로그가 떠서 원하는 호스트/IP로 연결할 수 있습니다(직전 연결 정보가 프리필됨 → 같은 서버면 바로 `연결`).
 
 배치 실행 결과도 **터미널에서 그대로** 확인합니다(별도 배치 콘솔 없음).
@@ -49,6 +49,8 @@ python main.py
 
 1. 실행하면 **SSH 연결 다이얼로그**가 뜹니다 → host/port/user/password 입력 후 `연결`.
    - 비밀번호는 메모리에만 보관하며 디스크에 저장하지 않습니다.
+   - 연결 시 **SSH 호스트 키를 사전 검증**(`known_hosts` 대조 및 최초/변경 시 사용자 확인)한 뒤 인증을 진행합니다.
+   - 설정 폴더(`~/.config/bullsTerminal/`)와 파일은 소유자 전용 권한(`0700`/`0600`) 및 원자적 저장으로 보호됩니다.
 2. 좌측 **기능 그룹**을 선택하면 그룹의 **명령 목록**이 표시됩니다(제목만 표시, 전체 명령/설명은 툴팁).
 3. 실행 방법:
    - **명령 클릭** → 터미널 하단 **명령 입력 패널**에 그 명령어가 표시됩니다. **일부 수정**(여러 줄 가능) 후 **Ctrl+Enter** 또는 **`입력`** 버튼을 누르면 그때 현재 터미널로 전송/실행됩니다. 여러 줄이면 줄마다 순차 실행됩니다.
@@ -83,7 +85,7 @@ python main.py
 - 앱 내에서 그룹/명령을 추가·편집·삭제. 변경 즉시 저장됩니다.
 - 기능 그룹과 명령 목록은 **이름(라벨) 기준 자동 정렬**됩니다(대소문자 무시).
 - 좌측 패널의 **기능 그룹 / 명령 목록 사이 경계를 드래그**해 높이를 조절할 수 있습니다(좌우 패널 경계도 드래그 가능).
-- 명령 옵션: **실행 전 확인창** (`confirm`, 위험 명령용)
+- 명령 옵션: **실행 전 확인창** (`confirm`, 위험 명령용), **실패 시 중단** (`stop_on_error`, 배치 실행 시 앞 명령이 실패하면 후속 명령 중단)
 - 저장 위치: `~/.config/bullsTerminal/commands.yaml` (직접 편집도 가능)
 
 ### 백업 / 복원 (다른 PC로 이전)
@@ -139,7 +141,7 @@ python main.py
 ## 알려진 제약
 
 - SSH 인증은 **비밀번호** 방식만 지원 (설계상 선택).
-- 배치 실행은 단순 순차(`;`) 방식이라 명령별 exit code 표시/실패 시 자동 중단은 제공하지 않습니다(터미널에서 결과를 직접 확인). 실행 중단은 터미널에서 `Ctrl+C`.
+- 배치 실행은 터미널 PTY에 한 줄로 전송하는 방식이라 명령별 별도 exit code 패널은 제공하지 않습니다(터미널에서 결과를 직접 확인). 단, `stop_on_error`가 켜진 명령은 `{ ...; } && { ...; }`로 묶여 실패 시 뒤 명령을 중단합니다. 실행 중단은 터미널에서 `Ctrl+C`.
 
 ## 단일 실행파일 빌드 (PyInstaller)
 
@@ -199,26 +201,32 @@ build-windows.bat
   런처는 `~/.local/share/applications/bullsTerminal.desktop` 에 설치됩니다.
 
 ### 참고
+- `v*.*.*` 형식의 Git 태그를 푸시하면 `.github/workflows/release.yml`이 Windows(`.exe`), macOS(`.dmg`/`.zip`), Linux(바이너리/`.tar.gz`) 빌드를 자동 생성해 GitHub Release에 업로드합니다.
 - onefile 실행파일은 크기가 크고(약 100~200MB) 최초 실행 시 압축 해제로 조금 느립니다.
 - 한글 입력(IME)은 번들 Qt 특성상 실행 환경의 입력기 설정(`QT_IM_MODULE=ibus` 등)이 필요할 수 있습니다.
 
 ## 구조
 
 ```
-main.py           진입점 (앱 아이콘 설정 → 연결 다이얼로그 → 메인 윈도우)
-core/models.py    Group / Command 데이터 모델
-core/store.py     commands.yaml 로드/저장 (+ 구 rsCommand 설정 자동 이전)
-core/resources.py 번들/소스 공통 리소스 경로 해석
-ssh/client.py     Paramiko 래퍼 (비밀번호 인증, 대화형 셸 채널)
-ui/connect_dialog.py  연결 입력
-ui/main_window.py     메인 (좌측 명령패널 + 우측 터미널 탭)
+main.py               진입점 (앱 아이콘·다크 테마 설정 → 연결 다이얼로그 → 메인 윈도우)
+core/models.py        Group / Command 데이터 모델 및 배치 명령 조립(stop_on_error)
+core/store.py         commands.yaml·favorites·settings 로드/저장 (0700/0600 권한, 원자적 쓰기)
+core/resources.py     번들/소스 공통 리소스 경로 해석
+core/version.py       앱 버전 관리 (Git 태그 동기화 및 DEFAULT_VERSION)
+ssh/client.py         Paramiko 래퍼 (호스트 키 사전 검증, 비밀번호 인증, 대화형 셸·SFTP)
+ui/theme.py           다크 징크 테마 및 스타일시트
+ui/connect_dialog.py  연결 입력 및 즐겨찾기 선택
+ui/main_window.py     메인 (좌측 명령패널 + 우측 터미널 탭 + 도구 도크)
 ui/command_editor.py  명령 추가·편집
-ui/terminal_widget.py pyte 기반 대화형 터미널 위젯
+ui/terminal_widget.py pyte 기반 대화형 터미널 위젯 (OSC 7 경로 동기화)
+ui/file_browser.py    WinSCP 스타일 SFTP 파일 브라우저 패널
+ui/bash_highlighter.py 명령 입력창 bash 구문 강조기
 ui/tools/__init__.py  도구 레지스트리(TOOL_SPECS) — 메뉴/탭 구성의 단일 출처
 ui/tools/base_panel.py    변환 도구 공통 틀 (입력/결과/공통 버튼)
 ui/tools/base64_panel.py  Base64 인코딩/디코딩
 ui/tools/crypto_panel.py  암호화/복호화 (AES-256-GCM)
-assets/               앱 아이콘 (svg 원본 / ico / png)
+assets/               앱 아이콘 (svg 원본 / ico / png / icns)
 tools/make_icon.py    아이콘 생성기 (표준 라이브러리만 사용)
 packaging/            리눅스 .desktop 런처 + 설치 스크립트
+.github/workflows/release.yml  멀티 플랫폼 자동 빌드 및 GitHub Release 워크플로우
 ```
